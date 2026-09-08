@@ -19,7 +19,9 @@ RUST_CI_LIB_TESTS ?= \
 	model_architectures::embedding::multimodal_embedding::tests::test_siglip_vision_encoder_loads_with_head_weights \
 	model_architectures::embedding::multimodal_embedding::tests::test_siglip_vision_encoder_requires_pooling_head \
 	model_architectures::traditional::candle_models::modernbert::tests::test_chunked_attention_matches_dense \
-	model_architectures::traditional::candle_models::modernbert::tests::test_chunked_attention_matches_dense_with_padding
+	model_architectures::traditional::candle_models::modernbert::tests::test_chunked_attention_matches_dense_with_padding \
+	model_architectures::traditional::candle_models::modernbert::tests::test_flash_window_bounds_match_the_kernel_band \
+	model_architectures::traditional::candle_models::modernbert::tests::test_mask_is_unpadded_detects_padding
 
 test-rust-ci:
 	@$(LOG_TARGET)

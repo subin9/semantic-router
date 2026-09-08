@@ -20,7 +20,36 @@ use crate::model_architectures::attention::chunked_sdpa::{
 
 // Flash Attention support (optional, requires flash-attn feature)
 #[cfg(feature = "flash-attn")]
-use candle_flash_attn::flash_attn;
+use candle_flash_attn::flash_attn_windowed;
+
+/// Left and right key limits for the flash path, in keys either side of a query.
+///
+/// The shared chunked kernel keeps `|i - j| <= window` on a local layer and every
+/// key on a global one. `flash_attn_windowed` counts keys on each side and always
+/// includes the diagonal, so the same band is a matching limit on both sides.
+fn flash_window_bounds(
+    uses_local_attention: bool,
+    window: usize,
+) -> (Option<usize>, Option<usize>) {
+    if uses_local_attention {
+        (Some(window), Some(window))
+    } else {
+        (None, None)
+    }
+}
+
+/// True when every position of the raw `(b, seq)` attention mask is a real token.
+///
+/// Flash Attention takes no padding mask. A batch that carries padding runs on the
+/// chunked kernel instead, which applies one.
+fn mask_is_unpadded(mask: &Tensor) -> Result<bool> {
+    let smallest = mask
+        .to_dtype(DType::F32)?
+        .flatten_all()?
+        .min(0)?
+        .to_scalar::<f32>()?;
+    Ok(smallest >= 1.0)
+}
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Config {
@@ -154,6 +183,7 @@ impl ModernBertAttention {
         &self,
         hidden_states: &Tensor,
         pad_mask: &Tensor,
+        unpadded: bool,
         uses_local_attention: bool,
         window: usize,
         block_size: usize,
@@ -178,8 +208,10 @@ impl ModernBertAttention {
             scale,
         };
 
-        // Use Flash Attention if enabled, otherwise use the shared chunked kernel
-        let xs = if self.use_flash_attn {
+        // Use Flash Attention if enabled, otherwise use the shared chunked kernel.
+        // Flash Attention carries no padding mask, so a padded batch falls to the
+        // chunked kernel rather than attending to the padded positions.
+        let xs = if self.use_flash_attn && unpadded {
             #[cfg(feature = "flash-attn")]
             {
                 // Flash Attention path
@@ -200,13 +232,17 @@ impl ModernBertAttention {
                 let v_flash_f16 = v_flash.to_dtype(DType::F16)?;
 
                 let softmax_scale = 1.0 / (self.attention_head_size as f32).sqrt();
-                // ModernBERT is bidirectional (non-causal)
-                match flash_attn(
+                // ModernBERT is bidirectional, so the band is symmetric and no side
+                // is closed for causality. A local layer carries the same window the
+                // chunked kernel applies; a global layer carries none.
+                let (window_left, window_right) = flash_window_bounds(uses_local_attention, window);
+                match flash_attn_windowed(
                     &q_flash_f16,
                     &k_flash_f16,
                     &v_flash_f16,
                     softmax_scale,
-                    false,
+                    window_left,
+                    window_right,
                 ) {
                     Ok(attn_output_f16) => {
                         // Convert back to F32 and transpose back to [batch, num_heads, seq_len, head_dim]
@@ -310,6 +346,7 @@ impl ModernBertLayer {
         &self,
         xs: &Tensor,
         pad_mask: &Tensor,
+        unpadded: bool,
         window: usize,
         block_size: usize,
     ) -> Result<Tensor> {
@@ -319,9 +356,14 @@ impl ModernBertLayer {
             xs = xs.apply(norm)?;
         }
 
-        let xs = self
-            .attn
-            .forward(&xs, pad_mask, self.uses_local_attention, window, block_size)?;
+        let xs = self.attn.forward(
+            &xs,
+            pad_mask,
+            unpadded,
+            self.uses_local_attention,
+            window,
+            block_size,
+        )?;
         let xs = (xs + residual)?;
         let mlp_out = xs.apply(&self.mlp_norm)?.apply(&self.mlp)?;
         let xs = (xs + mlp_out)?;
@@ -446,9 +488,12 @@ impl ModernBert {
         // were both O(seq^2); the window is now applied inside the kernel per block.
         let pad_mask = prepare_padding_mask(mask, DType::F32)?.to_device(xs.device())?;
         let window = self.local_attention_size / 2;
+        // Read once per request rather than per layer: the answer decides only which
+        // attention path the layers take, and it cannot change between them.
+        let unpadded = mask_is_unpadded(mask)?;
         let mut xs = xs.apply(&self.word_embeddings)?.apply(&self.norm)?;
         for layer in self.layers.iter() {
-            xs = layer.forward(&xs, &pad_mask, window, ATTN_QUERY_BLOCK)?;
+            xs = layer.forward(&xs, &pad_mask, unpadded, window, ATTN_QUERY_BLOCK)?;
         }
         let xs = xs.apply(&self.final_norm)?;
         Ok(xs)
@@ -722,7 +767,7 @@ mod tests {
 
                 for &block in &[1usize, 3, 8, 16, ATTN_QUERY_BLOCK] {
                     let chunked = attn
-                        .forward(&hidden, &pad_mask, uses_local, window, block)
+                        .forward(&hidden, &pad_mask, true, uses_local, window, block)
                         .unwrap();
                     let diff = max_abs_diff(&chunked, &reference);
                     assert!(
@@ -760,7 +805,7 @@ mod tests {
                 dense_reference_attention(&attn, &hidden, &raw_mask, uses_local, window);
             for &block in &[3usize, 8, ATTN_QUERY_BLOCK] {
                 let chunked = attn
-                    .forward(&hidden, &pad_mask, uses_local, window, block)
+                    .forward(&hidden, &pad_mask, false, uses_local, window, block)
                     .unwrap();
                 let diff = max_abs_diff(&chunked, &reference);
                 assert!(
@@ -772,5 +817,44 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_flash_window_bounds_match_the_kernel_band() {
+        use crate::model_architectures::attention::chunked_sdpa::build_local_band_mask;
+
+        let device = Device::Cpu;
+        let window = 4usize;
+        let seq_len = 12usize;
+
+        let (left, right) = flash_window_bounds(true, window);
+        assert_eq!((left, right), (Some(window), Some(window)));
+        assert_eq!(flash_window_bounds(false, window), (None, None));
+
+        // The kernel keeps a key where its band entry is 0. Flash keeps a key that
+        // lies within `left` keys before and `right` keys after the query, diagonal
+        // included. A local layer is only correct if the two key sets agree.
+        let band = build_local_band_mask(0, seq_len, 0, seq_len, window, &device).unwrap();
+        let band: Vec<f32> = band.flatten_all().unwrap().to_vec1().unwrap();
+        let (left, right) = (left.unwrap(), right.unwrap());
+        for i in 0..seq_len {
+            for j in 0..seq_len {
+                let kernel_keeps = band[i * seq_len + j] == 0.0;
+                let flash_keeps = j + left >= i && j <= i + right;
+                assert_eq!(kernel_keeps, flash_keeps, "query {i} key {j}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_mask_is_unpadded_detects_padding() {
+        let device = Device::Cpu;
+        assert!(mask_is_unpadded(&all_real_mask(2, 6, &device)).unwrap());
+
+        // One padded position anywhere in the batch keeps it off the flash path.
+        let mut values = vec![1f32; 12];
+        values[9] = 0.0;
+        let padded = Tensor::from_vec(values, (2, 6), &device).unwrap();
+        assert!(!mask_is_unpadded(&padded).unwrap());
     }
 }

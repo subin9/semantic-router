@@ -22,6 +22,8 @@ MODEL_REVISION = "9d6872cde6950c2c2b5786d182ec9a06ca1bdd66"
 RUNTIME_REVISION = "58cd660b51ba19aff01ad6f89e66f2d07f13908b"
 QUESTION_KEY = "intent"
 TIMEOUT_S = 60
+PROBABILITY_SUM_TOLERANCE = 0.001
+HTTP_OK = 200
 WARMUP_STATE = (
     "Describe how a bicycle gear system changes the effort needed to pedal uphill."
 )
@@ -33,8 +35,10 @@ TIMING_BOUNDARY = (
 
 
 def utc_now():
-    return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace(
-        "+00:00", "Z"
+    return (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
     )
 
 
@@ -52,18 +56,22 @@ def reject_duplicates(pairs):
 def check_contract(parsed, labels):
     """Return (errors, answer). No renormalization, values kept as returned."""
 
+    if not isinstance(parsed, dict):
+        return [f"response is {type(parsed).__name__}, not an object"], None
     errors = []
     if parsed.get("model") != MODEL:
         errors.append(f"model echoed as {parsed.get('model')!r}")
     answers = parsed.get("answers")
     if not isinstance(answers, dict) or set(answers) != {QUESTION_KEY}:
-        return errors + [f"answers keys are not exactly [{QUESTION_KEY!r}]"], None
+        return [*errors, f"answers keys are not exactly [{QUESTION_KEY!r}]"], None
     answer = answers[QUESTION_KEY]
+    if not isinstance(answer, dict):
+        return [*errors, f"answer is {type(answer).__name__}, not an object"], None
     if answer.get("type") != "choice":
         errors.append(f"answer type is {answer.get('type')!r}")
     probabilities = answer.get("probabilities")
     if not isinstance(probabilities, dict):
-        return errors + ["probabilities missing or not an object"], answer
+        return [*errors, "probabilities missing or not an object"], answer
     if set(probabilities) != set(labels) or len(probabilities) != len(labels):
         missing = sorted(set(labels) - set(probabilities))
         extra = sorted(set(probabilities) - set(labels))
@@ -71,15 +79,15 @@ def check_contract(parsed, labels):
     for label, value in probabilities.items():
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             errors.append(f"{label}: not a number")
-        elif not math.isfinite(value) or not 0.0 <= value <= 1.0:
+        elif not 0.0 <= value <= 1.0:
             errors.append(f"{label}: {value!r} not finite in [0,1]")
     numbers = [
         v
         for v in probabilities.values()
-        if isinstance(v, (int, float)) and not isinstance(v, bool)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and 0.0 <= v <= 1.0
     ]
     total = math.fsum(numbers)
-    if not abs(total - 1.0) <= 0.001:
+    if not abs(total - 1.0) <= PROBABILITY_SUM_TOLERANCE:
         errors.append(f"sum {total!r} differs from 1 by more than 0.001")
     if answer.get("choice") not in labels:
         errors.append(f"choice {answer.get('choice')!r} is not a candidate label")
@@ -132,7 +140,7 @@ def run_one(base_url, state, question, labels):
         "timing_boundary": TIMING_BOUNDARY,
     }
     errors, answer = (["no parsed response"], None)
-    if parsed is not None and status == 200:
+    if parsed is not None and status == HTTP_OK:
         errors, answer = check_contract(parsed, labels)
     record.update(
         {
@@ -145,7 +153,7 @@ def run_one(base_url, state, question, labels):
         }
     )
     probabilities = record["probabilities"]
-    if isinstance(probabilities, dict) and probabilities:
+    if record["contract_valid"]:
         top = max(probabilities.values())
         record["top1_from_probabilities"] = sorted(
             label for label, value in probabilities.items() if value == top

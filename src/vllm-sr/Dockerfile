@@ -361,12 +361,14 @@ RUN python3 -m venv "${VIRTUAL_ENV}" && \
 
 # The built-in model runtime on CPU: the Router starts vllm-sr-runtime for
 # model_runtime deployments it manages. GPU deployments attach to a runtime
-# started with the GPU build of PyTorch instead.
-ARG MODEL_RUNTIME_TORCH=torch==2.10.0
+# started with the GPU build of PyTorch instead. Its dependencies, CPU PyTorch
+# included, come from the lock so every build of a release gets the same set.
 COPY src/model-runtime/ /tmp/model-runtime/
 RUN "${VIRTUAL_ENV}/bin/pip" install --no-cache-dir \
-      --index-url https://download.pytorch.org/whl/cpu "${MODEL_RUNTIME_TORCH}" && \
-    "${VIRTUAL_ENV}/bin/pip" install --no-cache-dir /tmp/model-runtime && \
+      --extra-index-url https://download.pytorch.org/whl/cpu \
+      -r /tmp/model-runtime/requirements-lock.txt && \
+    "${VIRTUAL_ENV}/bin/pip" install --no-cache-dir --no-deps /tmp/model-runtime && \
+    "${VIRTUAL_ENV}/bin/pip" check && \
     rm -rf /tmp/model-runtime
 
 COPY --from=go-builder /build/router /usr/local/bin/router

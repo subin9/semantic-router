@@ -571,7 +571,8 @@ shared engine started with `vllm-sr serve <hf-model>`.
 `VLLM_SR_RUNTIME_COMMAND` overrides the command (default `vllm-sr-runtime` on
 `PATH`), `VLLM_SR_RUNTIME_DIR` the socket directory and
 `VLLM_SR_RUNTIME_CACHE_DIR` the model cache. The `vllm-sr` image ships the
-runtime with CPU PyTorch and keeps its cache in the model volume, so managed
+runtime with CPU PyTorch, every dependency pinned by `requirements-lock.txt`,
+and keeps its cache in the model volume, so managed
 CPU deployments work out of the box; GPU deployments attach to a runtime built
 with a GPU wheel.
 

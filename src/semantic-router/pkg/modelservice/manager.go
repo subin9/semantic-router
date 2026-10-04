@@ -46,6 +46,7 @@ type deployment struct {
 	client     *Client
 	managed    bool
 	ready      atomic.Bool
+	inFlight   atomic.Int64
 	state      atomic.Value
 	cancel     context.CancelFunc
 	done       chan struct{}
@@ -141,7 +142,7 @@ func (m *Manager) start(name string, spec config.ModelDeployment) (*deployment, 
 	readyGauge.WithLabelValues(name).Set(0)
 	var wg sync.WaitGroup
 	if managed {
-		d.supervisor = &supervisor{name: name, command: managedCommand(m.command, spec, socket, m.cacheDir), env: os.Environ(), socket: socket}
+		d.supervisor = &supervisor{name: name, command: managedCommand(m.command, spec, socket, m.cacheDir), env: os.Environ(), socket: socket, inFlight: &d.inFlight}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -222,7 +223,9 @@ func (m *Manager) Decide(ctx context.Context, name string, request Request) (Res
 		return Response{}, ErrUnavailable
 	}
 	started := time.Now()
+	d.inFlight.Add(1)
 	response, err := d.client.Decide(ctx, request)
+	d.inFlight.Add(-1)
 	requestDuration.WithLabelValues(name).Observe(time.Since(started).Seconds())
 	requestsTotal.WithLabelValues(name, ErrorReason(err)).Inc()
 	return response, err

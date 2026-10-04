@@ -9,16 +9,26 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 )
 
-const fakeRuntimeEnv = "MODELSERVICE_FAKE_RUNTIME"
+const (
+	fakeRuntimeEnv = "MODELSERVICE_FAKE_RUNTIME"
+	// fakeRuntimeIgnoreTermEnv makes the fake runtime ignore SIGTERM, so only SIGKILL stops it.
+	fakeRuntimeIgnoreTermEnv = "MODELSERVICE_FAKE_RUNTIME_IGNORE_TERM"
+)
 
 // TestMain lets the test binary act as a managed runtime process:
 // <binary> serve <artifact> --uds <path> ... serves the fake contract on the socket.
@@ -31,6 +41,9 @@ func TestMain(m *testing.M) {
 }
 
 func serveFakeRuntime(args []string) {
+	if os.Getenv(fakeRuntimeIgnoreTermEnv) == "1" {
+		signal.Ignore(syscall.SIGTERM)
+	}
 	socket := ""
 	for index := 0; index+1 < len(args); index++ {
 		if args[index] == "--uds" {
@@ -76,6 +89,9 @@ func fakeRuntime(calls *atomic.Int64, ready *atomic.Bool) http.Handler {
 		}
 		if body.State == "slow" {
 			time.Sleep(300 * time.Millisecond)
+		}
+		if body.State == "hang" {
+			select {}
 		}
 		answers := map[string]interface{}{}
 		for id, raw := range body.Questions {
@@ -283,6 +299,52 @@ func TestManagerSupervisesAndRestartsManagedRuntime(t *testing.T) {
 	}
 	if len(manager.Statuses()) != 0 {
 		t.Fatalf("unreferenced deployments must stop: %+v", manager.Statuses())
+	}
+}
+
+func TestManagerLogsAForcedStopWithTheRequestsItCutOff(t *testing.T) {
+	core, logs := observer.New(zapcore.WarnLevel)
+	t.Cleanup(zap.ReplaceGlobals(zap.New(core)))
+	grace := stopGracePeriod
+	stopGracePeriod = 100 * time.Millisecond
+	t.Cleanup(func() { stopGracePeriod = grace })
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(fakeRuntimeEnv, "1")
+	t.Setenv(fakeRuntimeIgnoreTermEnv, "1")
+	t.Setenv(RuntimeCommandEnv, binary)
+	t.Setenv(RuntimeDirEnv, filepath.Join(t.TempDir(), "run"))
+	manager := NewManager()
+	defer func() { _ = manager.Shutdown(context.Background()) }()
+	deployment := config.ModelDeployment{Provider: config.ModelRuntimeProvider, Artifact: "vllm-sr/Decision-2.0-Kai-0.6B"}
+	if reconcileErr := manager.Reconcile(runtimeConfig(deployment)); reconcileErr != nil {
+		t.Fatal(reconcileErr)
+	}
+	waitReady(t, manager, "decider")
+	answered := make(chan error, 1)
+	go func() {
+		_, decideErr := manager.Decide(context.Background(), "decider", sampleRequest("hang"))
+		answered <- decideErr
+	}()
+	manager.mu.RLock()
+	d := manager.deployments["decider"]
+	manager.mu.RUnlock()
+	for deadline := time.Now().Add(5 * time.Second); d.inFlight.Load() != 1; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the request never reached the runtime")
+		}
+	}
+	if err := manager.Reconcile(&config.RouterConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-answered; err == nil {
+		t.Fatal("a request cut off by the kill must fail")
+	}
+	killed := logs.FilterMessage("runtime_process_killed").All()
+	if len(killed) != 1 || killed[0].ContextMap()["in_flight_requests"] != int64(1) {
+		t.Fatalf("a forced stop must be logged with the requests it cut off: %+v", logs.All())
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -18,10 +19,12 @@ import (
 const (
 	minRestartBackoff = time.Second
 	maxRestartBackoff = time.Minute
-	stopGracePeriod   = 10 * time.Second
 	// A process that ran this long before exiting resets the back-off.
 	stableRunDuration = 2 * time.Minute
 )
+
+// stopGracePeriod is how long a stopping runtime gets between SIGTERM and SIGKILL.
+var stopGracePeriod = 10 * time.Second
 
 // supervisor runs one Router-managed runtime process and restarts it with
 // exponential back-off until its context is cancelled.
@@ -30,6 +33,8 @@ type supervisor struct {
 	command []string
 	env     []string
 	socket  string
+	// inFlight counts the deployment's requests that are waiting on the runtime.
+	inFlight *atomic.Int64
 
 	mu      sync.Mutex
 	process *os.Process
@@ -131,6 +136,10 @@ func (s *supervisor) terminate(done <-chan error) {
 	select {
 	case <-done:
 	case <-time.After(stopGracePeriod):
+		logging.ComponentWarnEvent("model_runtime", "runtime_process_killed", map[string]interface{}{
+			"deployment": s.name, "pid": process.Pid, "grace_period": stopGracePeriod.String(),
+			"in_flight_requests": s.inFlight.Load(),
+		})
 		_ = syscall.Kill(-process.Pid, syscall.SIGKILL)
 		<-done
 	}

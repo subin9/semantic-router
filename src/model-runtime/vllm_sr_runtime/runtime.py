@@ -98,6 +98,8 @@ class Runtime:
         if config.autotune_cache:
             freeze_autotune(config.autotune_cache)
         self.health.set("loading", "resolving the model")
+        # Refuse a --device this host cannot serve before resolve() downloads.
+        place(config.model, config.device, 0)
         options = RegistryOptions(
             cache_dir=config.cache_dir,
             offline=config.offline,
@@ -115,7 +117,9 @@ class Runtime:
         package = family.verify(ref)
         spec = family.describe(package)
         parameters = package.loaded_parameters or 0
-        placement = place(spec, config.device, parameters, config.memory_budget_gib)
+        placement = place(
+            spec.name, config.device, parameters, config.memory_budget_gib
+        )
         engine = registry.instantiate("engines", config.engine)
         reason = engine.supports(spec, placement.device)
         if reason:

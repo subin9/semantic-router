@@ -1,12 +1,12 @@
 import pytest
 import torch
+from vllm_sr_runtime import runtime
 from vllm_sr_runtime.accel.cuda import CUDAAccelerator
 from vllm_sr_runtime.accel.rocm import ROCmAccelerator
+from vllm_sr_runtime.config import ServeConfig
 from vllm_sr_runtime.errors import PlacementError
 from vllm_sr_runtime.placement import parse_device, place
-from vllm_sr_runtime.plugins.base import BackboneSpec, DtypePolicy, ModelSpec
 
-SPEC = ModelSpec("tiny", BackboneSpec("qwen3", {}, ()), DtypePolicy(), 1024)
 GPU = torch.cuda.is_available()
 
 
@@ -20,17 +20,27 @@ def test_parse_device():
 
 
 def test_cpu_placement_and_budget():
-    placement = place(SPEC, "cpu", 1_000_000)
+    placement = place("tiny", "cpu", 1_000_000)
     assert placement.device.accelerator == "cpu" and placement.accelerator.validated
     with pytest.raises(PlacementError, match="memory-budget"):
-        place(SPEC, "cpu", 10_000_000_000, memory_budget_gib=1)
+        place("tiny", "cpu", 10_000_000_000, memory_budget_gib=1)
 
 
 @pytest.mark.skipif(GPU, reason="checks the CPU-only fallback")
 def test_auto_falls_back_to_cpu_without_gpus():
-    assert place(SPEC, "auto", 1000).device.accelerator == "cpu"
+    assert place("tiny", "auto", 1000).device.accelerator == "cpu"
     with pytest.raises(PlacementError, match="not available"):
-        place(SPEC, "rocm:0", 1000)
+        place("tiny", "rocm:0", 1000)
+
+
+def test_unusable_device_fails_before_the_download(monkeypatch):
+    def download(*args, **kwargs):
+        raise AssertionError("the model was resolved before the device was checked")
+
+    monkeypatch.setattr(runtime, "resolve", download)
+    config = ServeConfig(model="vllm-sr/Decision-1.0-Kai-0.6B", device="rocm:99")
+    with pytest.raises(PlacementError, match="no device can serve vllm-sr/Decision"):
+        runtime.Runtime(config).load()
 
 
 def test_cuda_is_marked_unvalidated_and_rocm_validated():

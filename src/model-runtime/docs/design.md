@@ -531,10 +531,12 @@ request -> validate (400) -> admission (429) -> plan: render every question (per
 
 `--device auto` picks the first available validated GPU (`rocm`, then
 `cuda`) with BF16 support and enough free memory, else `cpu`. An explicit
-`--device` (`cpu`, `cuda:N`, `rocm:N`) is honoured or fails. The memory
-estimate is the weight bytes under the dtype policy plus the activation bound
-of the forward token budget; `--memory-budget` caps it, and the runtime refuses
-to load rather than overcommit. `/v1/models` reports the placement.
+`--device` (`cpu`, `cuda:N`, `rocm:N`) is honoured or fails, and a device the
+host cannot serve fails before the model is resolved, so nothing is
+downloaded. The memory estimate is the weight bytes under the dtype policy
+plus the activation bound of the forward token budget; `--memory-budget` caps
+it, and the runtime refuses to load rather than overcommit. `/v1/models`
+reports the placement.
 
 ### 10.2 Readiness and health
 
@@ -561,7 +563,8 @@ For a deployment with `provider: model_runtime` and no `endpoint`, the router
 starts `vllm-sr-runtime serve <artifact> --revision <rev> --device <dev>
 --profile <p> --uds <path>` as a child process when its configuration loads
 and stops it when the deployment is removed or the router exits (SIGTERM, then
-SIGKILL after a grace period). The supervisor polls `/health` over the UDS,
+SIGKILL after a 10 s grace period, logged as `runtime_process_killed` with the
+requests still waiting on the runtime). The supervisor polls `/health` over the UDS,
 restarts a dead or failed runtime with exponential back-off (1 s to 60 s), and
 records restarts in metrics. The socket lives in a private directory (mode
 0700). With an `endpoint` (`unix:///path` or `http(s)://host:port`), the router

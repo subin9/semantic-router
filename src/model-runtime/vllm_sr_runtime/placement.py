@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from .errors import PlacementError
 from .plugins import registry
-from .plugins.base import Accelerator, DeviceInfo, ModelSpec
+from .plugins.base import Accelerator, DeviceInfo
 
 DEVICE = re.compile(r"(?P<kind>auto|cpu|cuda|rocm|xpu|mps)(?::(?P<index>\d+))?\Z")
 AUTO_ORDER = ("rocm", "cuda")
@@ -38,7 +38,7 @@ def estimate_bytes(parameters: int) -> int:
 
 
 def place(
-    spec: ModelSpec,
+    model: str,
     device: str,
     parameters: int,
     memory_budget_gib: float | None = None,
@@ -48,7 +48,7 @@ def place(
     budget = int(memory_budget_gib * (1 << 30)) if memory_budget_gib else None
     if budget is not None and needed > budget:
         raise PlacementError(
-            f"{spec.name} needs about {needed / (1 << 30):.1f} GiB, above --memory-budget {memory_budget_gib} GiB"
+            f"{model} needs about {needed / (1 << 30):.1f} GiB, above --memory-budget {memory_budget_gib} GiB"
         )
     candidates = (*AUTO_ORDER, "cpu") if kind == "auto" else (kind,)
     reasons = []
@@ -86,4 +86,4 @@ def place(
                 if index is not None
                 else f"{name}: no devices"
             )
-    raise PlacementError(f"no device can serve {spec.name}: " + "; ".join(reasons))
+    raise PlacementError(f"no device can serve {model}: " + "; ".join(reasons))

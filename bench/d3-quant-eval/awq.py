@@ -15,8 +15,8 @@ The algorithm of AWQ (Lin et al., 2024) as AutoAWQ runs it, adapted to Qwen3.5's
    - up_proj (rows) -> down_proj
    GDN's out_proj (after a gated norm shared across heads) and attention's o_proj (after the output gate)
    have no linear producer to fold into, so they take no scale.
-4. Per projection except q/k_proj, the clipping range of each output row and group is shrunk over 20 steps to
-   minimise the error of its output on sampled tokens.
+4. Per projection except q/k_proj, the clipping range of each output row and group is shrunk in 10 steps of 5%,
+   down to half of its largest weight, to minimise the error of its output on sampled tokens.
 5. The layer's projections are quantized (asymmetric int4, zero points), and the next layer reads the
    BF16 layer's output.
 

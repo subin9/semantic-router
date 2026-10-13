@@ -68,7 +68,7 @@ def main():
             "model.safetensors.index.json",
             pkg.MANIFEST_NAME,
             "__pycache__",
-        ):
+        ) or (path.is_dir() and path.name.startswith(".")):
             continue
         if not path.name.startswith("model-"):
             (shutil.copytree if path.is_dir() else shutil.copy)(path, out / path.name)

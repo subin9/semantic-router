@@ -343,7 +343,9 @@ def write_package(model, root, out, packed, runtime):
     save_file(tensors, str(out / "model.safetensors"))
     skip = {"model.safetensors.index.json", pkg.MANIFEST_NAME, "__pycache__"}
     for path in root.iterdir():
-        if path.name in skip or path.name.startswith("model-"):
+        # a hidden directory is a download cache (.cache), not part of the package
+        hidden = path.is_dir() and path.name.startswith(".")
+        if path.name in skip or path.name.startswith("model-") or hidden:
             continue
         (shutil.copytree if path.is_dir() else shutil.copy)(path, out / path.name)
     config = json.loads((root / "config.json").read_text())
@@ -387,7 +389,9 @@ def write_manifest(root, out, pkg):
     files = sorted(
         p.relative_to(out).as_posix()
         for p in out.rglob("*")
-        if p.is_file() and p.name != pkg.MANIFEST_NAME
+        if p.is_file()
+        and p.name != pkg.MANIFEST_NAME
+        and not any(part.startswith(".") for part in p.relative_to(out).parts[:-1])
     )
     hashes = {name: sha(out / name) for name in files}
     identity = {

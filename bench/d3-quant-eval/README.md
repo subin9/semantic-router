@@ -23,6 +23,9 @@ Rows with a state over 6,000 characters are dropped. Choice and score rows with 
 - `sensitivity.py MODEL_DIR CALIB_JSON DEV_JSON OUT_JSON {fp8,awq}` quantizes one decoder layer at a time, then sweeps keeping the k most sensitive layers in BF16.
 - `type_sens.py MODEL_DIR CALIB_JSON DEV_JSON OUT_JSON {fp8,awq}` does the same by projection type (MLP gate/up, MLP down, attention qkv, attention out, GDN inputs, GDN gates, GDN out): each type alone, and every type but one.
 - `fp8_quant.py` is the Triton per-row activation quantizer `quant_eval.py` uses when Triton is installed.
+- `awq.py MODEL_DIR CALIB_JSON OUT_DIR --runtime SRC/model-runtime [--rtn]` runs AWQ layer by layer (per-channel scales folded into the norms and `up_proj`, clipping searched per row and group) and writes an asymmetric int4 (group 128) compressed-tensors package with a `MODEL_MANIFEST.json` the model runtime verifies. `--rtn` writes plain round-to-nearest weights instead, as a baseline.
+- `fp8_package.py MODEL_DIR OUT_DIR --runtime SRC/model-runtime` writes an FP8 (FP8_DYNAMIC) compressed-tensors package on the CPU, keeping the GDN input projections in BF16 by default.
+- `keep_bf16.py AWQ_DIR BF16_DIR OUT_DIR LAYERS --runtime SRC/model-runtime` restores some decoder layers of an AWQ package to the BF16 checkpoint's tensors.
 
 FP8 needs `float8_e4m3fnuz` on MI300X (gfx942) or `float8_e4m3fn` on CUDA sm 8.9 or newer. Run with `D3_FAST=0` on ROCm to keep d3's own fused path out of the comparison.
 

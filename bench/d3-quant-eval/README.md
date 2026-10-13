@@ -18,7 +18,7 @@ Rows with a state over 6,000 characters are dropped. Choice and score rows with 
 
 ## Scripts
 
-- `quant_eval.py MODEL_DIR EVAL_JSON OUT_JSON {bf16,fp8,awq} [--calib CALIB_JSON] [--keep-bf16 REGEX]` answers every row and writes per-row probabilities, accuracy, weight memory and median latency. `fp8` is W8A8 (per-output-channel FP8 weights, per-row FP8 activations, `torch._scaled_mm`). `awq` is a simplified W4A16 AWQ (group 128, asymmetric int4, one scale per group of projections that read the same input, no clip search) with the matmul in BF16 after dequantization, so its latency is not a kernel number. `bf16` loads the checkpoint as published, which is also how a GPTQ or other pre-quantized checkpoint would be run.
+- `quant_eval.py MODEL_DIR EVAL_JSON OUT_JSON {bf16,fp8,awq} [--calib CALIB_JSON] [--keep-bf16 REGEX]` answers every row and writes per-row probabilities, accuracy, weight memory and median latency. `fp8` is W8A8 (per-output-channel FP8 weights, per-row FP8 activations, `torch._scaled_mm`). `awq` is a simplified W4A16 AWQ (group 128, asymmetric int4, one scale per group of projections that read the same input, no clip search) with the matmul in BF16 after dequantization, so its latency is not a kernel number. `bf16` loads the checkpoint as published, which is also how a pre-quantized checkpoint is run. transformers dequantizes a compressed-tensors INT4 or NVFP4 checkpoint to BF16 when it loads it (NVFP4 also loses its FP4 activations), so a package that ships its own `d3q/` loader (for example `TheoHsiung/d3-W4A16-G128` or `TheoHsiung/d3-NVFP4`) is loaded through `d3q.load.load_d3` instead and runs on its 4-bit kernels; `loader` in the summary records which path ran. `fp8` and `awq` are refused on such a package.
 - `compare.py BF16_JSON OTHER_JSON...` prints agreement with BF16 (rows whose top answer is the same) and the largest probability difference per row (median, p95, max).
 - `sensitivity.py MODEL_DIR CALIB_JSON DEV_JSON OUT_JSON {fp8,awq}` quantizes one decoder layer at a time, then sweeps keeping the k most sensitive layers in BF16.
 - `type_sens.py MODEL_DIR CALIB_JSON DEV_JSON OUT_JSON {fp8,awq}` does the same by projection type (MLP gate/up, MLP down, attention qkv, attention out, GDN inputs, GDN gates, GDN out): each type alone, and every type but one.
@@ -35,8 +35,9 @@ FP8 needs `float8_e4m3fnuz` on MI300X (gfx942) or `float8_e4m3fn` on CUDA sm 8.9
 python make_sets.py sets
 python quant_eval.py vllm-sr/d3 sets/eval600.json bf16.json bf16
 python quant_eval.py vllm-sr/d3 sets/eval600.json fp8.json fp8 --keep-bf16 'linear_attn\.in_proj_(qkv|z)$'
-python quant_eval.py path/to/d3-gptq sets/eval600.json gptq.json bf16
-python compare.py bf16.json fp8.json gptq.json
+python quant_eval.py path/to/d3-W4A16-G128 sets/eval600.json w4a16.json bf16
+python quant_eval.py path/to/d3-NVFP4 sets/eval600.json nvfp4.json bf16
+python compare.py bf16.json fp8.json w4a16.json nvfp4.json
 ```
 
-The GPTQ line is how a pre-quantized checkpoint would be compared. It has not been run with a GPTQ d3.
+The last two lines run pre-quantized packages (GPTQ W4A16 group 128, and NVFP4) on their own 4-bit kernels.

@@ -2,7 +2,9 @@
 
 usage: quant_eval.py MODEL_DIR EVAL_JSON OUT_JSON MODE [--calib CALIB_JSON] [--n N] [--keep-bf16 REGEX]
 MODE:
-  bf16   the checkpoint as published
+  bf16   the checkpoint as published; a compressed-tensors package that ships d3q/ (for example
+         TheoHsiung/d3-W4A16-G128 or d3-NVFP4) loads through d3q.load.load_d3, so it runs on its
+         4-bit kernels instead of being dequantized to BF16 by transformers
   fp8    W8A8: per-output-channel FP8 weights, per-token FP8 activations, torch._scaled_mm
   awq    W4A16: int4 weights, group 128, asymmetric, with an AWQ input-channel scale searched per
          group of projections that read the same input (needs --calib); matmul in BF16 after dequant
@@ -15,7 +17,9 @@ import gc
 import json
 import re
 import statistics
+import sys
 import time
+from pathlib import Path
 
 import torch
 from torch import nn
@@ -111,6 +115,33 @@ class Int4Linear(nn.Module):
 
     def forward(self, x):
         return nn.functional.linear(x * self.inv_s, self.weight(), self.bias)
+
+
+def ships_d3q(root):
+    """A quantized package with its own d3q/ loader (its 4-bit kernels).
+
+    transformers dequantizes compressed-tensors INT4/NVFP4 weights to BF16 when it loads
+    them (NVFP4 also loses its FP4 activations), so that path would not measure it.
+    """
+    path = Path(root)
+    config = path / "config.json"
+    return (
+        config.is_file()
+        and "quantization_config" in json.loads(config.read_text())
+        and (path / "d3q").is_dir()
+    )
+
+
+def load(root):
+    """(model, loader): d3q for a package that ships it, transformers otherwise."""
+    if ships_d3q(root):
+        path = Path(root)
+        sys.path.insert(0, str(path))
+        from d3q.load import load_d3
+
+        return load_d3(path, device="cuda:0", batch_size=1), "d3q"
+    model = AutoModel.from_pretrained(root, trust_remote_code=True, device="cuda:0")
+    return model, "transformers"
 
 
 def linears(lm, keep):
@@ -243,12 +274,12 @@ def main():
         "--keep-bf16", default=None, help="regex of projection names kept in BF16"
     )
     args = p.parse_args()
+    if args.mode != "bf16" and ships_d3q(args.root):
+        p.error(f"{args.root} is already quantized: run it with mode bf16")
     rows = [r for r in json.load(open(args.eval))[: args.n] if usable(r)]
-    model = AutoModel.from_pretrained(
-        args.root, trust_remote_code=True, device="cuda:0"
-    )
+    model, loader = load(args.root)
     lm = model.backbone.language_model
-    info = {}
+    info = {"loader": loader}
     t0 = time.time()
     if args.mode == "fp8":
         names = [n for n, _ in linears(lm, args.keep_bf16)]
@@ -316,7 +347,9 @@ def main():
         "weights_mib": round(weights / 2**20),
         "peak_mib": round(torch.cuda.max_memory_allocated() / 2**20),
         "median_ms": round(statistics.median(times) * 1000, 1),
-        "fast_path": getattr(model.runtime, "fast_skipped", None) or "on",
+        # d3q returns the runtime D3 itself; transformers wraps it in .runtime
+        "fast_path": getattr(getattr(model, "runtime", model), "fast_skipped", None)
+        or "on",
         "device": torch.cuda.get_device_name(),
     }
     json.dump({"summary": summary, "rows": out}, open(args.out, "w"))

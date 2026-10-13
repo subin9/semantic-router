@@ -384,7 +384,11 @@ def write_manifest(root, out, pkg):
                 h.update(chunk)
         return h.hexdigest()
 
-    files = sorted(p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file())
+    files = sorted(
+        p.relative_to(out).as_posix()
+        for p in out.rglob("*")
+        if p.is_file() and p.name != pkg.MANIFEST_NAME
+    )
     hashes = {name: sha(out / name) for name in files}
     identity = {
         n: hashes[n] for n in ("model.safetensors", *pkg.IDENTITY_FILES) if n in hashes

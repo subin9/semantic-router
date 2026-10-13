@@ -331,7 +331,18 @@ When `max_speed` is a deployment's configured profile, an encoder also loads
 a reduced-precision copy of its linear layers next to the FP32 weights, which
 `exact` keeps using: BF16 on GPUs, with FP32 norms, softmax and heads (the
 Decision 2.0 GPU policy), and dynamic int8 on CPU where that measures faster
-than FP32. `max_speed` requests run the copy. A family consents to a copy
+than FP32. A decoder can load one kind, `float8`, on GPUs with FP8 matrix
+units (NVIDIA compute capability 8.9 or later, AMD Instinct MI300 and MI350
+series): FP8 weights with one scale per output channel, multiplied with
+activations quantized to FP8 per row by one Triton kernel
+(`accel/triton_fp8.py`), next to the BF16 weights, with its own fused layers
+and graphs. The copy runs only where its graphs replay: a shape's first use,
+a shape the graphs cannot hold and an image prompt run on the exact stack,
+because an eager FP8 forward costs more host time than it saves (a decoder
+without graphs keeps no copy). The linear layers the records keep exact
+(`DtypePolicy.reduced_exact`) are shared, as are layers whose dimensions are
+not multiples of 16. `max_speed` requests run the copy, and placement counts
+it. A family consents to a copy
 (`DtypePolicy.reduced_gpu` / `reduced_cpu`) only where its records show at
 least 99% label agreement with `exact` (embeddings: cosine of at least
 0.999); faster alone is not enough. Approximate kernels follow the same rule

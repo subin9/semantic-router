@@ -19,7 +19,11 @@ Everything except `exact` is **approximate**: answers can differ slightly from
 the published ones, and a borderline answer can flip. On NVIDIA GPUs from
 Ampere on, `max_speed` runs Decision 2.0 with fused Triton kernels, 11% to 48%
 faster with no decision changed in its record; Vela 2.0 keeps the exact
-kernels there. Each approximate profile
+kernels there. On an AMD Instinct MI300 or MI350 series GPU or an
+NVIDIA GPU of compute capability 8.9 or later, `max_speed` also keeps an FP8
+copy of `vllm-sr/d3` (27B) next to its 16-bit weights and answers from it once
+a request's shape repeats: 22% faster on MI300X, with 99.0% of its
+test answers unchanged and about 20 GB more memory. Each approximate profile
 has a measured accuracy record in the runtime's
 [records](https://github.com/vllm-project/semantic-router/tree/main/src/model-runtime/docs/records).
 

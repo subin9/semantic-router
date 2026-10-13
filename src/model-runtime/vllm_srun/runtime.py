@@ -312,7 +312,10 @@ class ServedModel:
         spec = family.describe(package)
         parameters = package.loaded_parameters or 0
         budget = config.memory_budget_gib or process.memory_budget_gib
-        placement = place(spec, config.device, parameters, budget)
+        profiles = self._profiles()
+        default = profiles[config.profile]
+        reduced = default.engine_options(EngineOptions()).reduced_precision
+        placement = place(spec, config.device, parameters, budget, reduced)
         device = placement.device
         self._pin(
             builtin.kernel_choices(
@@ -327,8 +330,6 @@ class ServedModel:
         self.engine, engine = choose_engine(
             config.engine, spec, placement.device, preferred
         )
-        profiles = self._profiles()
-        default = profiles[config.profile]
         neighbors = frozenset(
             planned_engine(served)
             for served in process.served_models()

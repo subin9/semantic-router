@@ -210,6 +210,7 @@ class Decision3Family(ModelFamily):
                 weight_files=weights,
                 weight_prefix=details.vision_prefix,
             )
+        known = builtin.by_identity(package.model_sha256)
         return ModelSpec(
             name=package.model_name,
             backbone=backbone,
@@ -218,6 +219,8 @@ class Decision3Family(ModelFamily):
                 bf16_resident=False,
                 gpu_weights="bfloat16",
                 cpu_weights="bfloat16",
+                reduced_gpu=known.reduced.get("gpu") if known else None,
+                reduced_exact=known.reduced_exact if known else (),
             ),
             max_input_tokens=package.max_input_tokens,
             kernel_variants=CONV_VARIANT,
@@ -621,7 +624,7 @@ class Decision3Model(DecisionModel[Item, list[float] | None]):
 
     # ------------------------------------------------------------------ forwards
 
-    def run(self, items: list[Item]) -> list[list[float] | None]:
+    def run(self, items: list[Item], reduced: bool = False) -> list[list[float] | None]:
         """Each run of items that share their images as one left-padded pass (released numerics)."""
         out: list[list[float] | None] = []
         start = 0
@@ -629,11 +632,17 @@ class Decision3Model(DecisionModel[Item, list[float] | None]):
             end = start + 1
             while end < len(items) and items[end].media is items[start].media:
                 end += 1
-            out.extend(self._pass(items[start:end]))
+            out.extend(self._pass(items[start:end], reduced))
             start = end
         return out
 
-    def _pass(self, items: list[Item]) -> list[list[float] | None]:
+    def run_approximate(self, items: list[Item]) -> list[list[float] | None]:
+        """``run`` on the engine's reduced copy where it loaded one (``max_speed`` and the package's consent)."""
+        return self.run(items, reduced=True)
+
+    def _pass(
+        self, items: list[Item], reduced: bool = False
+    ) -> list[list[float] | None]:
         width = max(len(item.ids) for item in items)
         rows = len(items)
         ids = torch.full((rows, width), self.pad_id, dtype=torch.long)
@@ -678,6 +687,7 @@ class Decision3Model(DecisionModel[Item, list[float] | None]):
                 query=last,
                 lengths=[len(item.ids) for item in items],
                 images=images,
+                reduced=reduced,
             )
         )
         counts = torch.as_tensor(

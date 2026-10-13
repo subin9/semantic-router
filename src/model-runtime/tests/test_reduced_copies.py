@@ -132,3 +132,118 @@ def test_the_engine_runs_reduced_batches_on_the_copy_only(tmp_path, profile_asks
     assert (model.receipt().get("reduced", {}).get("kind") == "int8") is profile_asks
     assert torch.equal(reduced, exact) is not profile_asks
     torch.testing.assert_close(reduced, exact, rtol=0, atol=0.1)
+
+
+def test_a_float8_copy_needs_a_gpu_with_fp8_matrix_units():
+    assert "GPU" in unavailable("float8", CPU)
+
+
+def test_a_view_shares_the_layers_the_records_keep_exact():
+    runnable("bfloat16")
+    from vllm_srun.engines.native.reduced import copy_counts
+
+    backbone, _ = native(CONFIGS["yarn"], seed=5)
+    view = reduced_view(backbone, "bfloat16", exact=("layers.0.*", "layers.*.mlp.Wo"))
+    kept = [
+        name
+        for name, module in backbone.named_modules()
+        if isinstance(module, nn.Linear)
+        and (name.startswith("layers.0.") or name.endswith(".mlp.Wo"))
+    ]
+    total = sum(isinstance(m, nn.Linear) for m in backbone.modules())
+    assert len(kept) > len(backbone.layers)
+    for name in kept:
+        assert view.get_submodule(name) is backbone.get_submodule(name)
+    assert view.layers[1].attn.Wqkv.weight.dtype == torch.bfloat16
+    assert copy_counts(view, backbone) == {
+        "reduced": total - len(kept),
+        "exact": len(kept),
+    }
+    # the shared layers count once, with the backbone
+    assert linear_bytes(view, backbone) < linear_bytes(view)
+
+
+def decision3_model(package, reduced_cpu, options):
+    """A decision3 fixture package on the CPU, its policy consenting to ``reduced_cpu``."""
+    import dataclasses
+
+    from vllm_srun.accel.cpu import CPUAccelerator
+    from vllm_srun.engines.native.engine import NativeEngine
+    from vllm_srun.families.decision3.family import Decision3Family
+    from vllm_srun.plugins.base import PackageRef, RegistryOptions
+
+    family = Decision3Family(RegistryOptions(offline=True))
+    verified = family.verify(PackageRef(root=package))
+    spec = family.describe(verified)
+    spec = dataclasses.replace(
+        spec, dtype=dataclasses.replace(spec.dtype, reduced_cpu=reduced_cpu)
+    )
+    accelerator = CPUAccelerator()
+    return NativeEngine().load(spec, accelerator, accelerator.devices()[0], options)
+
+
+@pytest.mark.parametrize(
+    ("kind", "receipt"),
+    [
+        # A decoder takes only the decoder kinds: another leaves it exact without a word.
+        ("bfloat16", None),
+        # A decoder kind the device cannot run is skipped, and the receipt says why.
+        ("float8", "GPU"),
+    ],
+)
+def test_a_decoder_takes_only_decoder_copies(d3_text_package, kind, receipt):
+    from vllm_srun.plugins.base import EngineOptions
+
+    engine = decision3_model(
+        d3_text_package,
+        kind,
+        EngineOptions(reduced_precision=True, exact_kernels_only=False),
+    )
+    reduced = engine.receipt().get("reduced")
+    if receipt is None:
+        assert reduced is None
+    else:
+        assert reduced["kind"] == kind and receipt in reduced["skipped"]
+    assert engine.reduced == {}
+
+
+def test_the_exact_profile_never_loads_a_copy(d3_text_package):
+    from vllm_srun.plugins.base import EngineOptions
+
+    engine = decision3_model(d3_text_package, "float8", EngineOptions())
+    assert "reduced" not in engine.receipt()
+    assert engine.reduced == {}
+
+
+def test_decision3_takes_its_copy_and_exact_layers_from_the_registry(
+    d3_text_package, monkeypatch
+):
+    from vllm_srun.families.decision3.family import Decision3Family
+    from vllm_srun.plugins.base import PackageRef, RegistryOptions
+    from vllm_srun.registry import builtin
+    from vllm_srun.registry.tables.common import BuiltinModel
+
+    family = Decision3Family(RegistryOptions(offline=True))
+    verified = family.verify(PackageRef(root=d3_text_package))
+    assert family.describe(verified).dtype.reduced_gpu is None
+    entry = BuiltinModel(
+        repo_id="fixture/d3",
+        revision="0" * 40,
+        family="decision3",
+        model_sha256=verified.model_sha256,
+        manifest_sha256="",
+        loaded_parameters=0,
+        backbone="qwen3_5_text",
+        min_device_memory_gib=1,
+        reduced={"gpu": "float8"},
+        reduced_exact=("layers.*.linear_attn.in_proj_qkv",),
+    )
+    monkeypatch.setattr(
+        builtin,
+        "by_identity",
+        lambda sha: entry if sha == verified.model_sha256 else None,
+    )
+    dtype = family.describe(verified).dtype
+    assert dtype.reduced_gpu == "float8"
+    assert dtype.reduced_cpu is None
+    assert dtype.reduced_exact == ("layers.*.linear_attn.in_proj_qkv",)

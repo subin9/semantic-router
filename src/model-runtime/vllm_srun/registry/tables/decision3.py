@@ -42,6 +42,13 @@ DECISION3_MODELS: tuple[BuiltinModel, ...] = (
             "model-00011-of-00011.safetensors": "9842116c181985fec72fcb9560f5c9b849800f6322f8304dcc466990758c7355",
             "model.safetensors.index.json": "dc39d771cb240f775399e1845b11d081d8e007f14eecae3b780bc6272b128a46",
         },
+        # docs/records/decision3-float8.md: 99.0% of the test split's answers keep
+        # their top choice; the smaller packages stay under 99% and take no copy.
+        reduced={"gpu": "float8"},
+        reduced_exact=(
+            "layers.*.linear_attn.in_proj_qkv",
+            "layers.*.linear_attn.in_proj_z",
+        ),
     ),
     BuiltinModel(
         repo_id=f"{ORG}/d3-flash",

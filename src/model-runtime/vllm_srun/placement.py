@@ -19,6 +19,10 @@ ACTIVATION_RESERVE = 2 << 30
 # image and video requests (docs/records/decision3-device-memory.md).
 RESIDENT_HEADROOM = 0.10
 GIB = 1 << 30
+# Bytes per parameter of a reduced copy (``DtypePolicy.reduced_gpu`` /
+# ``reduced_cpu``) that a profile asking for one loads next to the exact
+# weights; an upper bound, since a copy holds only the linear layers.
+REDUCED_BYTES = {"bfloat16": 2, "int8": 1, "float32-packed": 4, "float8": 1}
 
 
 @dataclass(frozen=True)
@@ -84,20 +88,30 @@ def resident_dtype(spec: ModelSpec, accelerator: str) -> str:
     return policy.gpu_weights or policy.weights
 
 
-def estimate_bytes(spec: ModelSpec, parameters: int, accelerator: str) -> int:
+def estimate_bytes(
+    spec: ModelSpec, parameters: int, accelerator: str, reduced: bool = False
+) -> int:
     """The weights in the dtype ``accelerator`` holds them in, plus an activation reserve.
 
     Weights a family holds in BF16 there (``gpu_weights`` / ``cpu_weights``)
     count two bytes each plus ``RESIDENT_HEADROOM``; FP32 stays an upper bound
-    for the others (BF16-resident Linear weights only lower it). The reserve
+    for the others (BF16-resident Linear weights only lower it). ``reduced``
+    (the profile asks for reduced copies) adds the copy the policy consents
+    to on that accelerator, at ``REDUCED_BYTES`` per parameter. The reserve
     covers loading and ordinary requests: inputs of tens of thousands of
     tokens need more, and a forward that runs out of device memory fails
     only its own requests.
     """
+    from .engines.native.reduced import DECODER_KINDS
+
     width = DTYPE_BYTES.get(resident_dtype(spec, accelerator), FP32_BYTES)
     weights = parameters * width
     if width < FP32_BYTES:
         weights += int(weights * RESIDENT_HEADROOM)
+    policy = spec.dtype
+    kind = policy.reduced_cpu if accelerator == "cpu" else policy.reduced_gpu
+    if reduced and kind and (spec.encoder or kind in DECODER_KINDS):
+        weights += parameters * REDUCED_BYTES.get(kind, FP32_BYTES)
     return weights + ACTIVATION_RESERVE
 
 
@@ -106,6 +120,7 @@ def place(
     device: str,
     parameters: int,
     memory_budget_gib: float | None = None,
+    reduced: bool = False,
 ) -> Placement:
     kind, index = parse_device(device)
     budget = int(memory_budget_gib * GIB) if memory_budget_gib else None
@@ -124,7 +139,7 @@ def place(
         if not accelerator.available():
             absent.append(f"{name}: not available on this host")
             continue
-        needed = estimate_bytes(spec, parameters, name)
+        needed = estimate_bytes(spec, parameters, name, reduced)
         if budget is not None and needed > budget:
             reasons.append(
                 f"{name}: {spec.name} needs about {needed / GIB:.1f} GiB, "

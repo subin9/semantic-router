@@ -25,7 +25,10 @@ four scored panels), so it belongs to the exact profile:
   concurrent traffic forms many distinct large shapes whose captures would cost
   several forwards each. Graphs are captured until there are ``MAX_GRAPHS`` of
   them or the device's used memory has grown since the first capture by
-  ``MAX_GRAPH_BYTES`` or by half of what was free then, whichever is less; after that, new shapes run eagerly. Captured graphs are never destroyed while serving: on ROCm,
+  ``MAX_GRAPH_BYTES`` or by half of what was free then, whichever is less; after that, new shapes run eagerly.
+  A reduced copy's graphs (``engine.py``) run a shape that does not replay on the
+  exact backbone (``fallback``): an eager FP8 forward spends more host time
+  launching its quantization and scaled GEMMs than it saves on the device. Captured graphs are never destroyed while serving: on ROCm,
   evicting large graphs from the shared memory pool, between large eager
   batches of Index traffic, led to GPU memory access faults. On CUDA the same
   runner also replays Vela 2.0's forest forward (``models/forest.py``) per
@@ -667,8 +670,11 @@ class Graphs:
         max_graphs: int = MAX_GRAPHS,
         max_tokens: int = MAX_GRAPH_TOKENS,
         max_bytes: int = MAX_GRAPH_BYTES,
+        fallback: nn.Module | None = None,
     ):
         self.backbone = backbone
+        # What a shape that does not replay runs instead (the module docstring).
+        self.fallback = backbone if fallback is None else fallback
         self.masks = masks
         self.capture_after = capture_after
         self.max_graphs = max_graphs
@@ -699,6 +705,7 @@ class Graphs:
             (input_ids, attention_mask),
             lambda ids, mask: self.eager(ids, mask, padded),
             rows * length,
+            lambda ids, mask: self.eager(ids, mask, padded, self.fallback),
         )
 
     def run(
@@ -707,8 +714,13 @@ class Graphs:
         inputs: tuple[torch.Tensor, ...],
         body: Callable[..., torch.Tensor],
         tokens: int,
+        eager: Callable[..., torch.Tensor] | None = None,
     ) -> torch.Tensor:
-        """``body(*inputs)``, replayed from the graph of ``key`` once captured (the module docstring)."""
+        """``body(*inputs)``, replayed from the graph of ``key`` once captured (the module docstring).
+
+        A call that does not replay runs ``eager`` (by default ``body``).
+        """
+        eager = body if eager is None else eager
         entry = self.graphs.get(key)
         if entry is None:
             if (
@@ -717,17 +729,17 @@ class Graphs:
                 or not torch.is_inference_mode_enabled()
             ):
                 self.stats["eager"] += 1
-                return body(*inputs)
+                return eager(*inputs)
             if len(self.seen) > 1 << 16:
                 self.seen.clear()
             self.seen[key] = self.seen.get(key, 0) + 1
             if self.seen[key] < self.capture_after:
                 self.stats["eager"] += 1
-                return body(*inputs)
+                return eager(*inputs)
             entry = self._capture(key, inputs, body)
             if entry is None:
                 self.stats["eager"] += 1
-                return body(*inputs)
+                return eager(*inputs)
         for static, value in zip(entry["inputs"], inputs, strict=True):
             static.copy_(value)
         entry["graph"].replay()
@@ -736,9 +748,13 @@ class Graphs:
         return output
 
     def eager(
-        self, input_ids: torch.Tensor, attention_mask: torch.Tensor, padded: bool
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        padded: bool,
+        backbone: nn.Module | None = None,
     ) -> torch.Tensor:
-        hidden: torch.Tensor = self.backbone(
+        hidden: torch.Tensor = (backbone or self.backbone)(
             input_ids, attention_mask, masks=self.masks.build(attention_mask, padded)
         )
         return hidden

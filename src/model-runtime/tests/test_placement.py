@@ -253,6 +253,25 @@ def test_the_estimate_counts_weights_in_the_dtype_the_device_holds():
     assert estimate_bytes(fp32_on_cpu, billion, "cpu") == 4 * billion + 2 * GIB
 
 
+def test_the_estimate_adds_the_copy_a_profile_loads():
+    billion = 1_000_000_000
+    fp8 = replace(D3, dtype=replace(D3.dtype, reduced_gpu="float8"))
+    exact = estimate_bytes(fp8, billion, "rocm")
+    assert exact == estimate_bytes(D3, billion, "rocm")
+    assert estimate_bytes(fp8, billion, "rocm", reduced=True) == exact + billion
+    # the policy consents on GPUs only, and a decoder takes no view kind
+    assert estimate_bytes(fp8, billion, "cpu", reduced=True) == estimate_bytes(
+        fp8, billion, "cpu"
+    )
+    bf16 = replace(D3, dtype=replace(D3.dtype, reduced_gpu="bfloat16"))
+    assert estimate_bytes(bf16, billion, "rocm", reduced=True) == exact
+    encoder = replace(SPEC, encoder=True, dtype=replace(SPEC.dtype, reduced_cpu="int8"))
+    assert (
+        estimate_bytes(encoder, billion, "cpu", reduced=True)
+        == estimate_bytes(encoder, billion, "cpu") + billion
+    )
+
+
 @pytest.mark.parametrize("model", sorted(DECISION3_PEAKS_GIB))
 def test_the_estimate_covers_each_measured_decision3_peak_with_margin(model):
     parameters, peak = DECISION3_PEAKS_GIB[model]

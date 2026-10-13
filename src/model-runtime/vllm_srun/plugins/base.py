@@ -149,9 +149,13 @@ class DtypePolicy:
     (``EngineOptions.reduced_precision``): ``"bfloat16"`` on GPUs; on CPUs
     ``"bfloat16"`` (only where ``DeviceInfo.bf16``), ``"float32-packed"``
     (oneDNN's pre-packed FP32 linear) or ``"int8"`` (dynamic); None keeps the
-    exact weights. A family consents only
-    where its records show at least 99% label agreement with the exact path
-    (embeddings: cosine of at least 0.999). ``approximate_kernels`` consents,
+    exact weights; ``"float8"`` on GPUs with FP8 matrix units, for decoders,
+    whose linear layers it replaces in place except those named under
+    ``reduced_exact`` (``fnmatch`` patterns of linear layer names within the
+    backbone, ``"layers.*.linear_attn.in_proj_qkv"``). A
+    family consents only where its records show at least 99% label agreement
+    with the exact path (embeddings: cosine of at least 0.999).
+    ``approximate_kernels`` consents,
     on the same evidence per question type, to the accelerator's approximate
     kernels when the profile allows them (``EngineOptions.exact_kernels_only``
     off).
@@ -165,6 +169,7 @@ class DtypePolicy:
     cpu_weights: str | None = None
     reduced_gpu: str | None = None
     reduced_cpu: str | None = None
+    reduced_exact: tuple[str, ...] = ()
     approximate_kernels: bool = False
 
 
@@ -341,7 +346,9 @@ class ForwardBatch:
     ``shared_prefix`` > 0 asks an engine that ``supports_shared_context`` to run the
     rows as one shared-context tree whose first ``shared_prefix`` tokens (common to
     every row, before any endpoint) are computed once. ``images`` are the rows'
-    image inputs, for a backbone that reads them.
+    image inputs, for a backbone that reads them. ``reduced`` runs the rows on
+    the engine's reduced copy of the decoder where it loaded one (an approximate
+    batch); a shared-context tree always runs the exact stack.
     """
 
     input_ids: torch.Tensor
@@ -351,6 +358,7 @@ class ForwardBatch:
     lengths: list[int]
     shared_prefix: int = 0
     images: ImageInputs | None = None
+    reduced: bool = False
 
 
 @dataclass

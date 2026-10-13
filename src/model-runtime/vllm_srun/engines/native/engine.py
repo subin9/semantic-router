@@ -37,7 +37,14 @@ from .models.forest import ForestShape
 from .models.lora import attach
 from .models.qwen3_5 import noncausal_masks, rope_index
 from .models.tree import Tree
-from .reduced import REDUCED_AUTOCAST, linear_bytes, reduced_view, unavailable
+from .reduced import (
+    DECODER_KINDS,
+    REDUCED_AUTOCAST,
+    copy_counts,
+    linear_bytes,
+    reduced_view,
+    unavailable,
+)
 from .weights import (
     cast_parameters,
     keep_linear_bf16,
@@ -76,7 +83,10 @@ class NativeEngineModel(EngineModel):
     ):
         """``reduced_kind`` asks for a reduced copy of every layer stack, which approximate batches run (``reduced.py``).
 
-        A copy the device cannot run is skipped, and the receipt says why.
+        The copies share every parameter but the linear layers, and the linear
+        layers the policy's ``reduced_exact`` names. A decoder's copy gets its
+        own fused layers and graphs. A copy the device cannot run is skipped,
+        and the receipt says why.
         ``towers`` are the model's other backbones (``ModelSpec.towers``).
         """
         self.backbone = backbone
@@ -94,12 +104,21 @@ class NativeEngineModel(EngineModel):
             if reduced_kind is None
             else unavailable(reduced_kind, self.device, device_info.bf16)
         )
-        # Views are taken before the linears are laid out: they copy nn.Linear layers.
+        if reduced_kind and not spec.encoder and spec.backbone.lora is not None:
+            self.reduced_skipped = "a decoder with a LoRA adapter keeps no reduced copy"
+        elif reduced_kind and not spec.encoder and not options.graphs:
+            # Eager FP8 spends more host time than it saves (fast.py), so a
+            # decoder's copy runs only as graphs.
+            self.reduced_skipped = (
+                "a decoder's reduced copy runs only in graphs, which are off"
+            )
+        # Views are taken before the linears are laid out and before the fast
+        # path binds its fused forwards to the layers: they copy both.
         self.reduced: dict[str | None, nn.Module] = (
             {}
             if reduced_kind is None or self.reduced_skipped
             else {
-                name: reduced_view(module, reduced_kind)
+                name: reduced_view(module, reduced_kind, spec.dtype.reduced_exact)
                 for name, module in self.stacks().items()
             }
         )
@@ -132,8 +151,11 @@ class NativeEngineModel(EngineModel):
         self.encoder_graphs: dict[str | None, EncoderGraphs] = {}
         self.reduced_graphs: dict[str | None, EncoderGraphs] = {}
         self.noncausal = bool(getattr(backbone, "noncausal", False))
+        self.reduced_fast: dict[str, Any] = {}
+        self.reduced_decoder_graphs: fast.Graphs | None = None
         if self.device.type == "cuda" and not spec.encoder:
             self._install_fast()
+            self._install_reduced_fast()
         if self.device.type == "cuda" and spec.encoder and options.graphs:
             self.encoder_graphs = {
                 name: EncoderGraphs(cast(models.EncoderBackbone, module), self.device)
@@ -172,6 +194,23 @@ class NativeEngineModel(EngineModel):
             assert self.masks is not None
             self.graphs = fast.Graphs(backbone, self.masks)
 
+    def _install_reduced_fast(self) -> None:
+        """The decoder copy's own fused layers and graphs, as the exact stack has them.
+
+        Only shapes its graphs replay run on the copy: every other approximate pass,
+        image prompts included, runs on the exact stack (``fast.Graphs`` fallback).
+        """
+        view = self.reduced.get(None)
+        if view is None:
+            return
+        if self.fast.get("fused_layers"):
+            self.reduced_fast["fused_layers"] = fast.install_fused(view)
+        if self.graphs is not None:
+            assert self.masks is not None
+            self.reduced_decoder_graphs = fast.Graphs(
+                view, self.masks, fallback=self.backbone
+            )
+
     def receipt(self) -> dict[str, Any]:
         """What runs this model: kernels, fast-path pieces and graph statistics."""
         out: dict[str, Any] = {"kernels": self.kernels.describe(), **self.fast}
@@ -182,13 +221,19 @@ class NativeEngineModel(EngineModel):
         if self.reduced:
             out["reduced"] = {
                 "kind": self.reduced_kind,
-                "bytes": sum(linear_bytes(view) for view in self.reduced.values()),
+                "bytes": self._copy_bytes(),
                 **(
                     {"encoder_graphs": graph_receipt(self.reduced_graphs)}
                     if self.reduced_graphs
                     else {}
                 ),
             }
+            view = self.reduced.get(None)
+            if view is not None and not self.spec.encoder:
+                out["reduced"] |= {"linear_layers": copy_counts(view, self.backbone)}
+                out["reduced"] |= self.reduced_fast
+                if self.reduced_decoder_graphs is not None:
+                    out["reduced"]["graphs"] = self.reduced_decoder_graphs.receipt()
         elif self.reduced_skipped:
             out["reduced"] = {
                 "kind": self.reduced_kind,
@@ -338,11 +383,16 @@ class NativeEngineModel(EngineModel):
         gather = batch.gather.to(self.device)
         query = batch.query.to(self.device)
         padded = any(n != input_ids.shape[1] for n in batch.lengths)
+        graphs = self.graphs
+        # Image prompts run eagerly, so on the exact stack (``_install_reduced_fast``).
+        reduced = self.reduced_decoder_graphs
+        if batch.reduced and batch.images is None and reduced is not None:
+            graphs = reduced
         with torch.inference_mode(), self.autocast():
             if batch.images is not None:
                 hidden = self._forward_images(batch, input_ids, attention_mask, padded)
-            elif self.graphs is not None:
-                hidden = self.graphs(input_ids, attention_mask, batch.lengths)
+            elif graphs is not None:
+                hidden = graphs(input_ids, attention_mask, batch.lengths)
             elif self.masks is not None:
                 hidden = self.backbone(
                     input_ids,
@@ -525,6 +575,13 @@ class NativeEngineModel(EngineModel):
         }
         return list(unique.values())
 
+    def _copy_bytes(self) -> int:
+        """Bytes the reduced copies hold beyond what they share with the exact stacks."""
+        stacks = self.stacks()
+        return sum(
+            linear_bytes(view, stacks[name]) for name, view in self.reduced.items()
+        )
+
     def _packed(self) -> list[onednn.PackedLinear]:
         return [
             layer
@@ -549,7 +606,7 @@ class NativeEngineModel(EngineModel):
         return packed + sum(parameter.numel() for parameter in self._parameters())
 
     def memory_bytes(self) -> int:
-        copy_bytes = sum(linear_bytes(view) for view in self.reduced.values())
+        copy_bytes = self._copy_bytes()
         packed = sum(
             layer.packed.numel() * layer.packed.element_size()
             for layer in self._packed()
@@ -572,6 +629,7 @@ class NativeEngineModel(EngineModel):
         self.branches = {}
         self.towers = {}
         self.reduced = {}
+        self.reduced_decoder_graphs = None
         self.encoder_graphs = {}
         self.reduced_graphs = {}
         if self.device.type == "cuda":
@@ -731,7 +789,11 @@ class NativeEngine(Engine):
             options,
             stacks.residency,
             stacks.branches,
-            kind if options.reduced_precision and spec.encoder else None,
+            (
+                kind
+                if options.reduced_precision and (spec.encoder or kind in DECODER_KINDS)
+                else None
+            ),
             stacks.towers,
         )
 

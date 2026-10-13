@@ -26,7 +26,8 @@ class BuiltinModel:
     (``{"cpu": "onnxruntime"}``), where the performance records show it faster.
     ``reduced`` maps ``gpu`` / ``cpu`` to the reduced-precision copy the
     package's records support (``DtypePolicy.reduced_gpu`` / ``reduced_cpu``);
-    a device it does not name gets none.
+    a device it does not name gets none. ``reduced_exact`` names the linear
+    layers the records keep exact under that copy (``DtypePolicy.reduced_exact``).
     """
 
     repo_id: str
@@ -44,6 +45,7 @@ class BuiltinModel:
     golden_answers: dict[str, Any] = field(default_factory=dict)
     kernel_choices: dict[str, Any] = field(default_factory=dict)
     reduced: Mapping[str, str] = field(default_factory=dict)
+    reduced_exact: tuple[str, ...] = ()
 
 
 def with_recorded(

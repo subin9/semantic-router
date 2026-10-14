@@ -19,7 +19,7 @@ import torch
 from safetensors import safe_open
 from safetensors.torch import save_file
 
-from awq import TARGETS, write_manifest
+from awq import TARGETS, finish_package
 
 FP8_MAX = 448.0
 IGNORE = [r"re:.*visual\..*", r"re:.*linear_attn\.in_proj_(a|b)$"]
@@ -98,8 +98,7 @@ def main():
         },
         "ignore": IGNORE + args.keep_bf16,
     }
-    (out / "config.json").write_text(json.dumps(config, indent=2) + "\n")
-    write_manifest(root, out, pkg)
+    finish_package(root, out, config, pkg)
     print(out, "quantized", quantized, "projections")
 
 

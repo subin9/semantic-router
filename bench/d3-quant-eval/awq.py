@@ -370,7 +370,60 @@ def write_package(model, root, out, packed, runtime):
         },
         "ignore": [r"re:.*visual\..*", r"re:.*linear_attn\.in_proj_(a|b)$"],
     }
+    finish_package(root, out, config, pkg)
+
+
+# Every field llm-compressor writes for a quantization argument; without them (and without
+# quantization_status) transformers takes the checkpoint for an unquantized one.
+QUANT_ARGS = {
+    "actorder": None,
+    "block_structure": None,
+    "dynamic": False,
+    "group_size": None,
+    "num_bits": 8,
+    "observer": "minmax",
+    "observer_kwargs": {},
+    "scale_dtype": None,
+    "strategy": "tensor",
+    "symmetric": True,
+    "type": "int",
+    "zp_dtype": None,
+}
+
+
+def finish_package(root, out, config, pkg):
+    """Complete the quantization_config as llm-compressor writes it, add the ``d3q`` loader, write the manifest.
+
+    ``d3q`` lets the package's own d3 runtime run the quantized weights through transformers, without the
+    vLLM Semantic Router model runtime.
+    """
+    q = config["quantization_config"]
+    for group in q["config_groups"].values():
+        group["format"] = q["format"]
+        group["weights"] = (
+            QUANT_ARGS | {"observer": "memoryless_minmax"} | group["weights"]
+        )
+        if group.get("input_activations"):
+            group["input_activations"] = (
+                QUANT_ARGS | {"observer": None} | group["input_activations"]
+            )
+    q.update(
+        {
+            "global_compression_ratio": None,
+            "kv_cache_scheme": None,
+            "quantization_status": "compressed",
+            "sparsity_config": {},
+            "transform_config": {},
+            "version": "0.19.0",
+        }
+    )
     (out / "config.json").write_text(json.dumps(config, indent=2) + "\n")
+    shutil.copytree(
+        Path(__file__).parent / "d3q",
+        out / "d3q",
+        ignore=shutil.ignore_patterns("__pycache__"),
+        dirs_exist_ok=True,
+    )
     write_manifest(root, out, pkg)
 
 
@@ -391,7 +444,10 @@ def write_manifest(root, out, pkg):
         for p in out.rglob("*")
         if p.is_file()
         and p.name != pkg.MANIFEST_NAME
-        and not any(part.startswith(".") for part in p.relative_to(out).parts[:-1])
+        and not any(
+            part.startswith(".") or part == "__pycache__"
+            for part in p.relative_to(out).parts[:-1]
+        )
     )
     hashes = {name: sha(out / name) for name in files}
     identity = {

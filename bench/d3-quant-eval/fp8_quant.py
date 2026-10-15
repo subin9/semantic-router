@@ -9,7 +9,7 @@ import triton.language as tl
 def _rows_kernel(
     x_ptr, q_ptr, s_ptr, n_cols, stride_x, stride_q, fmax, BLOCK: tl.constexpr
 ):
-    row = tl.program_id(0)
+    row = tl.program_id(0).to(tl.int64)  # rows * stride passes 2**31 on long prompts
     x_row = x_ptr + row * stride_x
     amax = tl.zeros((BLOCK,), dtype=tl.float32)
     for start in range(0, n_cols, BLOCK):

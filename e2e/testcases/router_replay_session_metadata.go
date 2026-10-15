@@ -142,6 +142,7 @@ func replayTurnIndexRange(items []replayListItem) (int, int) {
 }
 
 type postChatOpts struct {
+	model     string
 	sessionID string
 	userID    string
 	content   string
@@ -153,9 +154,13 @@ func postChatCompletionsWithReplayHeaders(ctx context.Context, session *fixtures
 	if len(msgs) == 0 {
 		msgs = []fixtures.ChatMessage{{Role: "user", Content: o.content}}
 	}
+	model := o.model
+	if model == "" {
+		model = "vllm-sr/auto"
+	}
 	chat := fixtures.NewChatCompletionsClient(session, 45*time.Second)
 	resp, err := chat.Create(ctx, fixtures.ChatCompletionsRequest{
-		Model:    "vllm-sr/auto",
+		Model:    model,
 		User:     o.userID,
 		Messages: msgs,
 	}, map[string]string{

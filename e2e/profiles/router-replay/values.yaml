@@ -77,6 +77,8 @@ config:
       recipe: replay-second
     - model_names: ["vllm-sr/shadow-ok"]
       recipe: shadow-ok
+    - model_names: ["vllm-sr/session-export"]
+      recipe: session-export
     - model_names: ["vllm-sr/shadow-judge"]
       recipe: shadow-judge
     - model_names: ["vllm-sr/shadow-down"]
@@ -94,6 +96,52 @@ config:
         signals: {}
         decisions:
           - name: shared_replay_decision
+            priority: 1
+            rules:
+              operator: AND
+              conditions: []
+            modelRefs:
+              - model: openai/gpt-oss-20b
+                use_reasoning: false
+            plugins:
+              - type: router_replay
+                configuration:
+                  enabled: true
+                  max_records: 1000
+                  capture_request_body: true
+                  capture_response_body: true
+                  max_body_bytes: 65536
+    # A repeated question matches the reask signal on the turn that repeats
+    # it, which is the feedback the sessions export joins to the turn before.
+    - name: session-export
+      routing:
+        strategy: priority
+        signals:
+          reasks:
+            - name: repeated_question
+              description: The user asks the previous question again.
+              threshold: 0.8
+              lookback_turns: 1
+        decisions:
+          - name: session_reask_decision
+            priority: 2
+            rules:
+              operator: AND
+              conditions:
+                - type: reask
+                  name: repeated_question
+            modelRefs:
+              - model: openai/gpt-oss-20b
+                use_reasoning: false
+            plugins:
+              - type: router_replay
+                configuration:
+                  enabled: true
+                  max_records: 1000
+                  capture_request_body: true
+                  capture_response_body: true
+                  max_body_bytes: 65536
+          - name: session_default_decision
             priority: 1
             rules:
               operator: AND

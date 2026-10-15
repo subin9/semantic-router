@@ -381,6 +381,7 @@ curl -sS 'http://localhost:8080/api/v1/observability/replays?limit=20' \
 | `GET` | `/api/v1/observability/replays/{id}` | Read one record |
 | `GET` | `/api/v1/observability/replays/aggregate` | Aggregate routing and cost metadata |
 | `GET` | `/api/v1/observability/replays/trajectory?session_id=...&recipe=...` | Reconstruct one recipe's session trajectory |
+| `GET` | `/api/v1/observability/replays/sessions` | Export per-session turns for offline learning |
 
 List and aggregate requests accept filters such as `recipe`, `decision`,
 `model`, `session_id`, `cache_status`, and `search`. Pagination uses `limit`
@@ -392,6 +393,17 @@ only when the session's records belong to one recipe; an ambiguous session
 returns `400`. An explicit empty `recipe=` selects older, unscoped records.
 The response includes each request's route, latency, and lifecycle, including
 multiple requests at the same turn index.
+
+The sessions export takes the same filters and returns every selected record
+as a turn, ordered by recipe, session, conversation, and turn index. A turn
+carries the previous and selected model, whether it switched, token usage and
+cost, outcomes, and the protection evidence Router Learning recorded (cache
+warmth, tool-loop and hard-lock state, per-candidate switch advantage). The
+`user_feedback` and `reask` signals matched on the next user turn are attached
+to the last row of the turn they answer, and nothing is attached across a
+missing turn. The export holds no prompt, response, or tool text. Records with
+no `session_id` are counted under `excluded`, and a selection over 5000 records
+returns `400` so a session is never cut partway.
 
 Records, trajectory routes, and messages include `conversation_id` when an
 explicit conversation identity is available. Messages are grouped by conversation

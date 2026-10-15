@@ -27870,6 +27870,791 @@
         "x-vllm-sr-visibility": "primary"
       }
     },
+    "/api/v1/observability/replays/sessions": {
+      "get": {
+        "summary": "Export the selected Router Replay records as per-session turns with switch evidence, outcomes, and next-turn feedback",
+        "description": "Export the selected Router Replay records as per-session turns with switch evidence, outcomes, and next-turn feedback",
+        "operationId": "get_api_v1_observability_replays_sessions",
+        "tags": [
+          "observability"
+        ],
+        "parameters": [
+          {
+            "name": "search",
+            "in": "query",
+            "description": "Case-insensitive text search across replay records.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "recipe",
+            "in": "query",
+            "description": "Filter by recipe name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "decision",
+            "in": "query",
+            "description": "Filter by decision name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "description": "Filter by selected model.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "description": "Filter by logical session identifier.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cache_status",
+            "in": "query",
+            "description": "Filter by response-cache outcome.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "cached",
+                "streamed"
+              ]
+            }
+          }
+        ],
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session dataset",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "excluded": {
+                      "nullable": true,
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "integer"
+                      }
+                    },
+                    "object": {
+                      "type": "string"
+                    },
+                    "record_count": {
+                      "type": "integer"
+                    },
+                    "session_count": {
+                      "type": "integer"
+                    },
+                    "switch_count": {
+                      "type": "integer"
+                    },
+                    "turns": {
+                      "nullable": true,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "actual_cost": {
+                            "nullable": true,
+                            "type": "number"
+                          },
+                          "cached_prompt_tokens": {
+                            "nullable": true,
+                            "type": "integer"
+                          },
+                          "completion_tokens": {
+                            "nullable": true,
+                            "type": "integer"
+                          },
+                          "conversation_id": {
+                            "type": "string"
+                          },
+                          "decision": {
+                            "type": "string"
+                          },
+                          "duration_ms": {
+                            "type": "integer"
+                          },
+                          "lifecycle_state": {
+                            "type": "string"
+                          },
+                          "next_turn_feedback": {
+                            "nullable": true,
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "outcomes": {
+                            "nullable": true,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "idempotency_key": {
+                                  "type": "string"
+                                },
+                                "metadata": {
+                                  "nullable": true,
+                                  "type": "object",
+                                  "additionalProperties": {
+                                    "type": "string"
+                                  }
+                                },
+                                "reason": {
+                                  "type": "string"
+                                },
+                                "score": {
+                                  "type": "number"
+                                },
+                                "source": {
+                                  "type": "string"
+                                },
+                                "target": {
+                                  "type": "string"
+                                },
+                                "target_ref": {
+                                  "type": "string"
+                                },
+                                "timestamp": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "verdict": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "source",
+                                "target",
+                                "verdict"
+                              ]
+                            }
+                          },
+                          "previous_model": {
+                            "type": "string"
+                          },
+                          "prompt_tokens": {
+                            "nullable": true,
+                            "type": "integer"
+                          },
+                          "protection": {
+                            "nullable": true,
+                            "type": "object",
+                            "properties": {
+                              "action": {
+                                "type": "string"
+                              },
+                              "active_tool_loop": {
+                                "type": "boolean"
+                              },
+                              "algorithm": {
+                                "type": "string"
+                              },
+                              "base_method": {
+                                "type": "string"
+                              },
+                              "base_model": {
+                                "type": "string"
+                              },
+                              "base_scores": {
+                                "nullable": true,
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "number"
+                                }
+                              },
+                              "base_selected_model": {
+                                "type": "string"
+                              },
+                              "cache_warmth": {
+                                "type": "number"
+                              },
+                              "cache_warmth_ok": {
+                                "type": "boolean"
+                              },
+                              "candidate_models": {
+                                "nullable": true,
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "candidate_traces": {
+                                "nullable": true,
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "object",
+                                  "properties": {
+                                    "base_score": {
+                                      "type": "number"
+                                    },
+                                    "current": {
+                                      "type": "boolean"
+                                    },
+                                    "final_score": {
+                                      "type": "number"
+                                    },
+                                    "frontier_cost_multiplier": {
+                                      "type": "number"
+                                    },
+                                    "handoff_penalty": {
+                                      "type": "number"
+                                    },
+                                    "net_switch_advantage": {
+                                      "type": "number"
+                                    },
+                                    "prefix_cache_benefit": {
+                                      "type": "number"
+                                    },
+                                    "prefix_cache_penalty": {
+                                      "type": "number"
+                                    },
+                                    "quality_gap": {
+                                      "type": "number"
+                                    },
+                                    "selector_delta": {
+                                      "type": "number"
+                                    },
+                                    "switch_history_penalty": {
+                                      "type": "number"
+                                    },
+                                    "tool_loop_penalty": {
+                                      "type": "number"
+                                    }
+                                  }
+                                }
+                              },
+                              "continuation_mass": {
+                                "type": "number"
+                              },
+                              "current_model": {
+                                "type": "string"
+                              },
+                              "decision_drift": {
+                                "type": "boolean"
+                              },
+                              "decision_reason": {
+                                "type": "string"
+                              },
+                              "final_model": {
+                                "type": "string"
+                              },
+                              "final_scores": {
+                                "nullable": true,
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "number"
+                                }
+                              },
+                              "hard_lock_reason": {
+                                "type": "string"
+                              },
+                              "hard_locked": {
+                                "type": "boolean"
+                              },
+                              "has_non_portable_context": {
+                                "type": "boolean"
+                              },
+                              "identity": {
+                                "nullable": true,
+                                "type": "object",
+                                "properties": {
+                                  "conversation": {
+                                    "type": "object",
+                                    "properties": {
+                                      "hash": {
+                                        "type": "string"
+                                      },
+                                      "required": {
+                                        "type": "boolean"
+                                      },
+                                      "source": {
+                                        "type": "string"
+                                      },
+                                      "status": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  },
+                                  "headers": {
+                                    "type": "object",
+                                    "properties": {
+                                      "conversation": {
+                                        "type": "string"
+                                      },
+                                      "session": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  },
+                                  "memory_key_hash": {
+                                    "type": "string"
+                                  },
+                                  "scope": {
+                                    "type": "string"
+                                  },
+                                  "session": {
+                                    "type": "object",
+                                    "properties": {
+                                      "hash": {
+                                        "type": "string"
+                                      },
+                                      "required": {
+                                        "type": "boolean"
+                                      },
+                                      "source": {
+                                        "type": "string"
+                                      },
+                                      "status": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  }
+                                }
+                              },
+                              "idle_expired": {
+                                "type": "boolean"
+                              },
+                              "idle_for_seconds": {
+                                "type": "number"
+                              },
+                              "idle_known": {
+                                "type": "boolean"
+                              },
+                              "last_cache_accounting_source": {
+                                "type": "string"
+                              },
+                              "last_decision_name": {
+                                "type": "string"
+                              },
+                              "learning": {
+                                "type": "string"
+                              },
+                              "memory_cached_tokens": {
+                                "type": "integer"
+                              },
+                              "memory_estimated_cache_savings": {
+                                "type": "number"
+                              },
+                              "memory_estimated_cached_tokens": {
+                                "type": "integer"
+                              },
+                              "memory_prompt_tokens": {
+                                "type": "integer"
+                              },
+                              "memory_turn_count": {
+                                "type": "integer"
+                              },
+                              "method": {
+                                "type": "string"
+                              },
+                              "missing_signals": {
+                                "nullable": true,
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "mode": {
+                                "type": "string"
+                              },
+                              "non_portable_context_reason": {
+                                "type": "string"
+                              },
+                              "phase": {
+                                "type": "string"
+                              },
+                              "proposal_model": {
+                                "type": "string"
+                              },
+                              "reason": {
+                                "type": "string"
+                              },
+                              "remaining_turn_prior": {
+                                "type": "number"
+                              },
+                              "remaining_turn_prior_ok": {
+                                "type": "boolean"
+                              },
+                              "remaining_turn_prior_rejected": {
+                                "type": "string"
+                              },
+                              "remaining_turn_prior_sample_count": {
+                                "type": "integer"
+                              },
+                              "remaining_turn_prior_source": {
+                                "type": "string"
+                              },
+                              "remaining_turns_estimate": {
+                                "type": "number"
+                              },
+                              "rescue": {
+                                "nullable": true,
+                                "type": "object",
+                                "properties": {
+                                  "active": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "active"
+                                ]
+                              },
+                              "sampling": {
+                                "type": "string"
+                              },
+                              "scope": {
+                                "type": "string"
+                              },
+                              "selected_model": {
+                                "type": "string"
+                              },
+                              "stability_weight": {
+                                "type": "number"
+                              },
+                              "stay_bias": {
+                                "type": "number"
+                              },
+                              "switch_cost": {
+                                "type": "number"
+                              },
+                              "switch_count": {
+                                "type": "integer"
+                              },
+                              "switch_margin": {
+                                "type": "number"
+                              },
+                              "turn_index": {
+                                "type": "integer"
+                              }
+                            }
+                          },
+                          "recipe": {
+                            "type": "string"
+                          },
+                          "record_id": {
+                            "type": "string"
+                          },
+                          "response_status": {
+                            "type": "integer"
+                          },
+                          "selected_model": {
+                            "type": "string"
+                          },
+                          "selection_method": {
+                            "type": "string"
+                          },
+                          "session_id": {
+                            "type": "string"
+                          },
+                          "switched": {
+                            "type": "boolean"
+                          },
+                          "timestamp": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "turn_index": {
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "record_id",
+                          "recipe",
+                          "session_id",
+                          "turn_index",
+                          "timestamp",
+                          "selected_model",
+                          "switched",
+                          "duration_ms"
+                        ]
+                      }
+                    },
+                    "version": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "version",
+                    "record_count",
+                    "session_count",
+                    "switch_count",
+                    "turns"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "description": "Correlation identifier for this management request.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "description": "Correlation identifier for this management request.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A management bearer token is required or invalid when bearer authentication is enabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "description": "Correlation identifier for this management request.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The authenticated role lacks the operation permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "description": "Correlation identifier for this management request.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "description": "Correlation identifier for this management request.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "description": "Correlation identifier for this management request.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "x-vllm-sr-permission": "replay.read",
+        "x-vllm-sr-sensitivity": "replay",
+        "x-vllm-sr-plane": "management",
+        "x-vllm-sr-audiences": [
+          "agent",
+          "operator"
+        ],
+        "x-vllm-sr-stability": "stable",
+        "x-vllm-sr-plugin-operations": [
+          {
+            "plugin": "router_replay",
+            "mode": "read"
+          },
+          {
+            "plugin": "shadow_dispatch",
+            "mode": "read"
+          }
+        ],
+        "x-vllm-sr-visibility": "primary"
+      }
+    },
     "/api/v1/observability/replays/trajectory": {
       "get": {
         "summary": "Build a recipe-scoped session trajectory with each recorded routing result",

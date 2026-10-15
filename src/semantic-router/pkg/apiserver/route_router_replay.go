@@ -76,6 +76,20 @@ func apiRouterReplayRoutes() []apiRoute {
 			jsonResponse[shadowdataset.Manifest](http.StatusOK, "Shadow comparison dataset manifest"),
 			errorResponses(http.StatusBadRequest, http.StatusNotFound, http.StatusInternalServerError),
 		),
+		managedRoute(
+			EndpointMetadata{
+				Path:        apiObservabilityReplaysPath + "/sessions",
+				Method:      "GET",
+				Description: "Export the selected Router Replay records as per-session turns with switch evidence, outcomes, and next-turn feedback",
+				Parameters:  routerReplayFilterParameters(),
+			},
+			policy,
+			(*ClassificationAPIServer).handleRouterReplay,
+			pluginOperationFor(config.DecisionPluginRouterReplay, "read"),
+			pluginOperationFor(config.DecisionPluginShadowDispatch, "read"),
+			jsonResponse[routerreplay.SessionDataset](http.StatusOK, "Session dataset"),
+			errorResponses(http.StatusBadRequest, http.StatusNotFound, http.StatusInternalServerError),
+		),
 		// Judge tasks carry captured prompt and answer text, so the route asks
 		// for replay.detail up front rather than serving a redacted task a
 		// judge could not use.

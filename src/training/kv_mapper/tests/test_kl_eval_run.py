@@ -114,5 +114,55 @@ class TextWindowTests(unittest.TestCase):
         self.assertEqual(args.chat_split, "test_sft")
 
 
+class _CharTemplate:
+    """One token per character; a turn renders as <role>content."""
+
+    def apply_chat_template(
+        self, messages, tools=None, tokenize=False, add_generation_prompt=False
+    ):
+        text = "".join(f"<{m['role']}>{m['content']}" for m in messages)
+        return text + ("<assistant>" if add_generation_prompt else "")
+
+    def encode(self, text, add_special_tokens=False):
+        return [ord(c) for c in text]
+
+
+class AgentCutTests(unittest.TestCase):
+    MESSAGES = (
+        {"role": "user", "content": "fix the bug"},
+        {"role": "assistant", "content": "ls"},
+        {"role": "tool", "content": "a.py b.py"},
+        {"role": "assistant", "content": "cat a.py"},
+        {"role": "tool", "content": "x" * 10},
+        {"role": "assistant", "content": "done"},
+    )
+
+    def setUp(self) -> None:
+        try:
+            from src.training.kv_mapper.kl_eval_run import agent_cut
+        except ImportError as exc:
+            raise unittest.SkipTest("torch or transformers not installed") from exc
+        self.cut = agent_cut
+        self.tok = _CharTemplate()
+
+    def prompt_length(self, turn: int) -> int:
+        text = self.tok.apply_chat_template(
+            self.MESSAGES[:turn], add_generation_prompt=True
+        )
+        return len(text)
+
+    def test_cuts_before_the_last_step_that_fits(self) -> None:
+        budget = self.prompt_length(5) - 1
+        prefix, reply = self.cut(self.tok, self.MESSAGES, None, budget, 3)
+        self.assertEqual(len(prefix), self.prompt_length(3))
+        self.assertEqual("".join(map(chr, reply)), "cat")
+
+    def test_rejects_a_cut_far_below_the_budget(self) -> None:
+        budget = 2 * self.prompt_length(1) + 2
+        self.assertLess(self.prompt_length(3), budget)
+        self.assertIsNone(self.cut(self.tok, self.MESSAGES, None, budget // 3, 8))
+        self.assertIsNotNone(self.cut(self.tok, self.MESSAGES, None, budget, 8))
+
+
 if __name__ == "__main__":
     unittest.main()

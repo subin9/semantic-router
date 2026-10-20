@@ -9,12 +9,17 @@ bootstrap intervals against the first artifact. Chat samples are cut before an
 assistant reply like the stage-2 training data, and plain-text samples are the
 first tokens of documents from a second corpus. HellaSwag cannot separate
 mappers that already match the cold target on short contexts, and this does.
+Agent samples (opt-in) are coding-agent trajectories with tool calls, cut before
+the last assistant step whose prompt fits --agent-prefix, so a mapper trained on
+chat can be checked on the long, tool-heavy context an agent carries when it
+switches models.
 Needs torch, transformers and datasets.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import random
 import sys
 from pathlib import Path
@@ -81,6 +86,75 @@ def text_samples(args, tokenizer, count, seed):
         if len(out) == count:
             return out
     raise ValueError("not enough text samples")
+
+
+def agent_cut(tokenizer, messages, tools, budget: int, continuation: int):
+    """Prefix and reply ids before the last assistant step whose prompt fits the
+    budget and fills at least half of it, or None."""
+
+    def prompt(turn: int) -> str:
+        return tokenizer.apply_chat_template(
+            messages[:turn], tools=tools, tokenize=False, add_generation_prompt=True
+        )
+
+    lengths: dict[int, int] = {}
+
+    def length(turn: int) -> int:
+        if turn not in lengths:
+            lengths[turn] = len(
+                tokenizer.encode(prompt(turn), add_special_tokens=False)
+            )
+        return lengths[turn]
+
+    turns = [i for i, m in enumerate(messages) if m.get("role") == "assistant" and i]
+    lo, hi, best = 0, len(turns) - 1, None
+    while lo <= hi:  # the prompt grows with the turn index
+        mid = (lo + hi) // 2
+        if length(turns[mid]) <= budget:
+            best, lo = turns[mid], mid + 1
+        else:
+            hi = mid - 1
+    if best is None or length(best) < budget // 2:
+        return None
+    prefix_text = prompt(best)
+    full_text = tokenizer.apply_chat_template(
+        messages[: best + 1], tools=tools, tokenize=False
+    )
+    if not full_text.startswith(prefix_text):
+        return None
+    reply = tokenizer.encode(full_text[len(prefix_text) :], add_special_tokens=False)
+    if not reply:
+        return None
+    return tokenizer.encode(prefix_text, add_special_tokens=False), reply[:continuation]
+
+
+def agent_samples(args, tokenizer, count, seed):
+    from datasets import load_dataset  # noqa: PLC0415
+
+    data = load_dataset(
+        args.agent_dataset,
+        split=args.agent_split,
+        revision=args.agent_revision,
+        streaming=True,
+    )
+    out = []
+    # Trajectories are large, so a small buffer keeps streaming memory bounded.
+    for row in data.shuffle(seed=seed, buffer_size=200):
+        messages, tools = row["trajectory"], row.get("tools")
+        if isinstance(messages, str):
+            messages = json.loads(messages)
+        if isinstance(tools, str):
+            tools = json.loads(tools)
+        for m in messages:
+            m["content"] = m.get("content") or ""
+        sample = agent_cut(
+            tokenizer, messages, tools, args.agent_prefix, args.max_continuation
+        )
+        if sample is not None:
+            out.append(sample)
+        if len(out) == count:
+            return out
+    raise ValueError("not enough agent samples")
 
 
 @torch.no_grad()
@@ -152,6 +226,8 @@ def run(args) -> dict:
         samples["chat"] = chat_samples(args, tokenizer, args.chat_count, args.seed)
     if args.text_count:
         samples["text"] = text_samples(args, tokenizer, args.text_count, args.seed)
+    if args.agent_count:
+        samples["agent"] = agent_samples(args, tokenizer, args.agent_count, args.seed)
     result = {
         "artifacts": {
             name: manifest.mapper_id for name, (manifest, _) in loaded.items()
@@ -192,6 +268,13 @@ def parse_args(argv=None):
     parser.add_argument("--max-continuation", type=int, default=256)
     parser.add_argument("--text-prefix", type=int, default=1024)
     parser.add_argument("--text-continuation", type=int, default=128)
+    parser.add_argument(
+        "--agent-dataset", default="nebius/SWE-rebench-openhands-trajectories"
+    )
+    parser.add_argument("--agent-revision")
+    parser.add_argument("--agent-split", default="train")
+    parser.add_argument("--agent-count", type=int, default=0)
+    parser.add_argument("--agent-prefix", type=int, default=8192)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--device", default="cuda:0")
     args = parser.parse_args(argv)
@@ -199,6 +282,8 @@ def parse_args(argv=None):
         parser.error("--chat-revision pins the chat dataset")
     if args.text_count and not args.text_revision:
         parser.error("--text-revision pins the text dataset")
+    if args.agent_count and not args.agent_revision:
+        parser.error("--agent-revision pins the agent dataset")
     return args
 
 

@@ -194,3 +194,19 @@ PYTHONPATH=. python3 src/training/kv_mapper/kl_eval_run.py \
   --chat-revision <ultrachat-sha> --text-revision <wikipedia-sha> \
   --output /tmp/kv-eval/kl.json
 ```
+
+`--agent-count` adds coding-agent trajectories with tool calls
+(`nebius/SWE-rebench-openhands-trajectories` by default), rendered with the
+target's chat template and its tool definitions, and cut before the last
+assistant step whose prompt fits `--agent-prefix` tokens and fills at least half
+of it. That is the context a coding agent carries when it switches models, and
+it is longer and more tool-heavy than the chat the mapper is trained on. Run it
+once per prefix length:
+
+```bash
+PYTHONPATH=. python3 src/training/kv_mapper/kl_eval_run.py \
+  --artifact stage2=/tmp/kv-artifacts/<stage2-mapper-id> \
+  --chat-count 0 --text-count 0 \
+  --agent-count 64 --agent-prefix 8192 --agent-revision <dataset-sha> \
+  --output /tmp/kv-eval/kl-agent-8k.json
+```

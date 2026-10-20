@@ -29,6 +29,7 @@ import argparse
 import gc
 import hashlib
 import json
+import os
 import shutil
 import sys
 import time
@@ -43,6 +44,7 @@ GROUP = 128
 GRID = 20
 CLIP_STEPS = 20
 CLIP_MIN = 0.5
+ATTN = "_attn_implementation"  # layer_inputs key: the attention implementation a row ran under
 TARGETS = [
     r"re:(.*\.)?layers\.\d+\.mlp\.(gate|up|down)_proj$",
     r"re:(.*\.)?layers\.\d+\.self_attn\.(q|k|v|o)_proj$",
@@ -75,8 +77,10 @@ def fake_quant(w, group=GROUP):
 
 def layer_inputs(model, rows):
     """Per calibration row: the first decoder layer's hidden states, and every layer's other arguments
-    (a GDN layer and a full-attention layer get different masks)."""
-    layers = model.backbone.language_model.layers
+    (a GDN layer and a full-attention layer get different masks), with the attention implementation the
+    layer ran under (``prefix_bidir`` switches it to the block attention only while the encoder runs)."""
+    lm = model.backbone.language_model
+    layers = lm.layers
     hidden, kwargs = [], []
 
     def hook(index):
@@ -86,6 +90,7 @@ def layer_inputs(model, rows):
                 kwargs.append({})
             kw = {k: v for k, v in kw.items() if k != "hidden_states"}
             kw["past_key_values"] = None
+            kw[ATTN] = lm.config._attn_implementation
             kwargs[-1][index] = kw
 
         return fn
@@ -103,11 +108,20 @@ def layer_inputs(model, rows):
 
 
 def run_layer(layer, inputs):
-    """``inputs``: (hidden_states, kwargs) per row."""
+    """``inputs``: (hidden_states, kwargs) per row, each row under the attention implementation it was recorded with."""
     outs = []
+    config = layer.self_attn.config if hasattr(layer, "self_attn") else None
     with torch.no_grad():
         for hidden, kwargs in inputs:
-            out = layer(hidden, **kwargs)
+            kwargs = dict(kwargs)
+            impl = kwargs.pop(ATTN)
+            if config is not None:
+                saved, config._attn_implementation = config._attn_implementation, impl
+            try:
+                out = layer(hidden, **kwargs)
+            finally:
+                if config is not None:
+                    config._attn_implementation = saved
             outs.append(out[0] if isinstance(out, tuple) else out)
     return outs
 
@@ -143,7 +157,8 @@ def search_scale(layer, linears, x, inputs, want):
     w = torch.cat([o.float() for o in originals])
     g = w.reshape(w.shape[0], -1, GROUP).abs()
     w_mean = (g / g.amax(-1, keepdim=True).clamp(min=1e-8)).reshape(w.shape).mean(0)
-    x_mean = x.abs().float().mean(0)
+    # in chunks: a float32 copy of every calibration token does not fit next to 512 rows
+    x_mean = sum(c.abs().float().sum(0) for c in x.split(1 << 16)) / x.shape[0]
     best = (float("inf"), None, None)
     for i in range(GRID):
         a = i / GRID
@@ -225,6 +240,9 @@ def main():
     torch.manual_seed(0)
     root, out = Path(args.root), Path(args.out)
     rows = [r for r in json.load(open(args.calib)) if qe.usable(r)]
+    # prefix_bidir (d3-turbo) answers through StateOnce, which calls the projections without the layers' forward;
+    # the per-row reference path runs every layer, so the hooks see each one.
+    os.environ.setdefault("D3_STATE_ONCE", "0")
     from transformers import AutoModel
 
     model = AutoModel.from_pretrained(root, trust_remote_code=True, device="cuda:0")

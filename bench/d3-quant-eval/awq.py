@@ -163,12 +163,20 @@ def fold(layer, producer, consumers, s):
     """Divide what ``producer`` emits by ``s`` and multiply the consumers' input columns by it."""
     p = layer.get_submodule(producer)
     if producer.endswith("layernorm"):  # Qwen3.5 RMSNorm: x * (1 + w)
-        p.weight.data = ((1 + p.weight.float()) / s - 1).to(p.weight.dtype)
+        # w sits near -1 once 1 + w is divided by a large s, where BF16 steps by 2**-8: cap s so 1 + w keeps
+        # two steps, and scale the consumers by the s the stored w gives, so the fold stays exact.
+        gain = 1 + p.weight.float()
+        s = torch.minimum(s, gain.abs() * 128).clamp(min=1e-4)
+        stored = (gain / s - 1).to(torch.bfloat16)  # what the package holds
+        p.weight.data = stored.to(p.weight.dtype)
+        kept = 1 + stored.float()
+        s = torch.where(kept == 0, s, gain / kept)
     else:  # a linear's output rows
         p.weight.data = (p.weight.float() / s[:, None]).to(p.weight.dtype)
     for name in consumers:
         c = layer.get_submodule(name)
         c.weight.data = (c.weight.float() * s).to(c.weight.dtype)
+    return s
 
 
 def search_clip(weight, x, tokens):
@@ -260,7 +268,7 @@ def main():
         for producer, linears, also in [] if args.rtn else groups:
             x = feats[linears[0]]
             err, a, s = search_scale(layer, linears, x, loss_inputs, want)
-            fold(layer, producer, linears + also, s)
+            s = fold(layer, producer, linears + also, s)
             for n in linears:
                 feats[n] = feats[n] / s.to(feats[n].dtype)
             info[producer] = {"alpha": a, "loss": err}

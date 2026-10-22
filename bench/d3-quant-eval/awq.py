@@ -349,16 +349,21 @@ def main():
             x = feats[linears[0]]
             err, a, s = search_scale(layer, linears, x, loss_inputs, want)
             s = fold(layer, producer, linears + also, s)
+            # the projections of a group read one input: one smoothed copy for all of them
+            scaled = x / s.to(x.dtype)
+            del x
             for n in linears:
-                feats[n] = feats[n] / s.to(feats[n].dtype)
+                feats[n] = scaled
+            del scaled
             info[producer] = {"alpha": a, "loss": err}
         info["fold_error"] = loss(layer, loss_inputs, want)
         for n in names:
             m = layer.get_submodule(n)
+            x = feats.pop(n)  # freed once the last projection reading it is rounded
             if not (args.rtn or args.clip):
-                deq, q, scale, zero = gptq(m.weight.data, feats[n])
+                deq, q, scale, zero = gptq(m.weight.data, x)
             elif args.clip and not n.endswith(("q_proj", "k_proj")):
-                bound = search_clip(m.weight.data, feats[n], args.clip_tokens)
+                bound = search_clip(m.weight.data, x, args.clip_tokens)
                 w = m.weight.data.float().reshape(m.weight.shape[0], -1, GROUP)
                 m.weight.data = (
                     w.clamp(-bound, bound).reshape(m.weight.shape).to(m.weight.dtype)
@@ -371,6 +376,7 @@ def main():
                 zero.squeeze(-1),
             )
             m.weight.data = deq.to(m.weight.dtype)
+            del x
         info["output_error"] = loss(layer, loss_inputs, want)
         hidden = outs
         del feats, want, inputs, loss_inputs

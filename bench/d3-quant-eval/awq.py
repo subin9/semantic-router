@@ -1,6 +1,6 @@
-"""AWQ for d3: activation-aware int4 weights (W4A16, group 128, asymmetric), written as a compressed-tensors package.
+"""AWQ scales then GPTQ rounding for d3: int4 weights (W4A16, group 128, asymmetric), written as a compressed-tensors package.
 
-usage: awq.py MODEL_DIR CALIB_JSON OUT_DIR --runtime SRC/model-runtime [--loss-rows 64] [--clip-tokens 4096] [--rtn]
+usage: awq.py MODEL_DIR CALIB_JSON OUT_DIR --runtime SRC/model-runtime [--loss-rows 64] [--clip-tokens 4096] [--rtn | --clip]
 
 The algorithm of AWQ (Lin et al., 2024) as AutoAWQ runs it, adapted to Qwen3.5's layers:
 
@@ -15,10 +15,14 @@ The algorithm of AWQ (Lin et al., 2024) as AutoAWQ runs it, adapted to Qwen3.5's
    - up_proj (rows) -> down_proj
    GDN's out_proj (after a gated norm shared across heads) and attention's o_proj (after the output gate)
    have no linear producer to fold into, so they take no scale.
-4. Per projection except q/k_proj, the clipping range of each output row and group is shrunk in 10 steps of 5%,
-   down to half of its largest weight, to minimise the error of its output on sampled tokens.
-5. The layer's projections are quantized (asymmetric int4, zero points), and the next layer reads the
-   BF16 layer's output.
+4. The layer's projections are rounded to asymmetric int4 with zero points by GPTQ (Frantar et al., 2023):
+   column by column, each column's rounding error spread over the columns not yet rounded through the
+   inverse Hessian of the projection's (smoothed) calibration inputs, a group's scale and zero point taken
+   from its already compensated weights. The next layer reads the BF16 layer's output.
+
+On d3-turbo this changed fewer answers than AWQ's own clipping search, which ``--clip`` keeps: per
+projection except q/k_proj, the clipping range of each output row and group is shrunk in 10 steps of 5%,
+down to half of its largest weight, then rounded to nearest.
 
 The package keeps every file of MODEL_DIR, one ``model.safetensors`` with the projections as
 ``weight_packed`` / ``weight_scale`` / ``weight_zero_point`` / ``weight_shape``, ``quantization_config``
@@ -44,6 +48,7 @@ GROUP = 128
 GRID = 20
 CLIP_STEPS = 20
 CLIP_MIN = 0.5
+DAMP = 0.01  # GPTQ: fraction of the mean Hessian diagonal added to it
 ATTN = "_attn_implementation"  # layer_inputs key: the attention implementation a row ran under
 TARGETS = [
     r"re:(.*\.)?layers\.\d+\.mlp\.(gate|up|down)_proj$",
@@ -75,10 +80,61 @@ def fake_quant(w, group=GROUP):
     return ((q - zero) * scale).reshape(n, k), q, scale, zero
 
 
+def group_params(w):
+    """Asymmetric int4 scale and zero point of each row of ``w`` [n, GROUP], as ``fake_quant`` takes them."""
+    lo, hi = w.amin(-1, keepdim=True), w.amax(-1, keepdim=True)
+    scale = ((hi - lo) / 15).clamp(min=1e-5)
+    return scale, (-lo / scale).round().clamp(0, 15)
+
+
+def gptq(weight, x):
+    """GPTQ rounding of ``weight`` [n, k] on inputs ``x`` [tokens, k]: (dequantized, q, scale, zero) as ``fake_quant``."""
+    w = weight.float().clone()
+    n, k = w.shape
+    h = torch.zeros(k, k, device=w.device)
+    for c in x.split(1 << 14):
+        c = c.float()
+        h += c.t() @ c
+    dead = h.diagonal() == 0
+    h[dead, dead] = 1
+    w[:, dead] = 0
+    h.diagonal().add_(DAMP * h.diagonal().mean())
+    # the upper Cholesky factor of the inverse Hessian: row i holds the error spread of column i
+    hinv = torch.linalg.cholesky(
+        torch.cholesky_inverse(torch.linalg.cholesky(h)), upper=True
+    )
+    del h
+    q = torch.empty(n, k, device=w.device)
+    scales, zeros = [], []
+    for start in range(
+        0, k, GROUP
+    ):  # one block per group, so a group's scale sees every earlier update
+        end = start + GROUP
+        block = w[:, start:end]
+        scale, zero = group_params(block)
+        scales.append(scale)
+        zeros.append(zero)
+        err = torch.empty_like(block)
+        hb = hinv[start:end, start:end]
+        for i in range(GROUP):
+            col = block[:, i : i + 1]
+            qc = ((col / scale).round() + zero).clamp(0, 15)
+            q[:, start + i] = qc[:, 0]
+            e = (col - (qc - zero) * scale) / hb[i, i]
+            block[:, i:] -= e @ hb[i : i + 1, i:]
+            err[:, i : i + 1] = e
+        w[:, end:] -= err @ hinv[start:end, end:]
+    scale = torch.stack(scales, 1)
+    zero = torch.stack(zeros, 1)
+    g = q.reshape(n, k // GROUP, GROUP)
+    return ((g - zero) * scale).reshape(n, k), g, scale, zero
+
+
 def layer_inputs(model, rows):
     """Per calibration row: the first decoder layer's hidden states, and every layer's other arguments
     (a GDN layer and a full-attention layer get different masks), with the attention implementation the
-    layer ran under (``prefix_bidir`` switches it to the block attention only while the encoder runs)."""
+    layer ran under (``prefix_bidir`` switches it to the block attention only while the encoder runs).
+    """
     lm = model.backbone.language_model
     layers = lm.layers
     hidden, kwargs = [], []
@@ -231,10 +287,16 @@ def main():
     )
     p.add_argument("--loss-rows", type=int, default=64)
     p.add_argument("--clip-tokens", type=int, default=4096)
-    p.add_argument(
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument(
         "--rtn",
         action="store_true",
         help="round to nearest only: no scales, no clipping (baseline)",
+    )
+    mode.add_argument(
+        "--clip",
+        action="store_true",
+        help="AWQ's clipping search and round to nearest instead of GPTQ rounding",
     )
     args = p.parse_args()
     torch.manual_seed(0)
@@ -293,13 +355,16 @@ def main():
         info["fold_error"] = loss(layer, loss_inputs, want)
         for n in names:
             m = layer.get_submodule(n)
-            if not args.rtn and not n.endswith(("q_proj", "k_proj")):
+            if not (args.rtn or args.clip):
+                deq, q, scale, zero = gptq(m.weight.data, feats[n])
+            elif args.clip and not n.endswith(("q_proj", "k_proj")):
                 bound = search_clip(m.weight.data, feats[n], args.clip_tokens)
                 w = m.weight.data.float().reshape(m.weight.shape[0], -1, GROUP)
                 m.weight.data = (
                     w.clamp(-bound, bound).reshape(m.weight.shape).to(m.weight.dtype)
                 )
-            deq, q, scale, zero = fake_quant(m.weight.data)
+            if args.rtn or args.clip:
+                deq, q, scale, zero = fake_quant(m.weight.data)
             packed[f"layers.{index}.{n}"] = (
                 q.reshape(m.weight.shape),
                 scale.squeeze(-1),

@@ -8,13 +8,14 @@ Rows with a state over 6,000 characters are dropped, and so are choice or score
 rows whose options repeat (the answer would be ambiguous).
 
   calib.json          128 rows of the first train shard, for AWQ or GPTQ calibration
+  calib512.json       calib.json plus 384 more rows of that shard outside the dev sets
   dev200.json         200 other rows of that shard, for choosing what stays in BF16
   dev1000.json        1,000 other rows of that shard, same purpose, less noise
   eval600.json        600 rows of the test split, for quick transformers runs
   test_requests.jsonl every usable test row as a model runtime request
                       (tools/reduced_agreement.py in src/model-runtime)
 
-The three train sets do not overlap, and nothing is chosen on the test split.
+The calibration and dev sets do not overlap, and nothing is chosen on the test split.
 """
 
 import json
@@ -80,6 +81,7 @@ def main():
     train = load("data/train-00000-of-00006.parquet")
     random.Random(1).shuffle(train)
     dump(train[:128], out / "calib.json")
+    dump(train[:300] + train[1500:1712], out / "calib512.json")
     dump(train[300:500], out / "dev200.json")
     dump(train[500:1500], out / "dev1000.json")
     test = load("data/test-00000-of-00001.parquet")

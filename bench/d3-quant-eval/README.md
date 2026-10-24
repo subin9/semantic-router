@@ -9,6 +9,7 @@ Scripts used to compare quantized Decision 3.0 (d3) checkpoints with the publish
 | File | Rows | From | Used for |
 | --- | --- | --- | --- |
 | `calib.json` | 128 | train shard 0 | AWQ (or GPTQ) calibration |
+| `calib512.json` | 512 | train shard 0 | text rows of the d3-turbo INT4 calibration, `calib.json` included |
 | `dev200.json` | 200 | train shard 0 | per-layer sensitivity |
 | `dev1000.json` | 1,000 | train shard 0 | per-projection-type sensitivity |
 | `eval600.json` | 600 | test | quick BF16 vs quantized runs |
@@ -24,7 +25,8 @@ Rows with a state over 6,000 characters are dropped. Choice and score rows with 
 - `sensitivity.py MODEL_DIR CALIB_JSON DEV_JSON OUT_JSON {fp8,awq}` quantizes one decoder layer at a time, then sweeps keeping the k most sensitive layers in BF16.
 - `type_sens.py MODEL_DIR CALIB_JSON DEV_JSON OUT_JSON {fp8,awq}` does the same by projection type (MLP gate/up, MLP down, attention qkv, attention out, GDN inputs, GDN gates, GDN out): each type alone, and every type but one.
 - `fp8_quant.py` is the Triton per-row activation quantizer `quant_eval.py` uses when Triton is installed.
-- `awq.py MODEL_DIR CALIB_JSON OUT_DIR --runtime SRC/model-runtime [--rtn | --clip]` runs AWQ smoothing layer by layer (per-channel scales folded into the norms and `up_proj`), rounds every projection with GPTQ, and writes an asymmetric int4 (group 128) compressed-tensors package with a `MODEL_MANIFEST.json` the model runtime verifies. `--clip` replaces GPTQ with AWQ's own clipping search per row and group and round to nearest, which built the first AWQ packages. `--rtn` writes plain round-to-nearest weights instead, as a baseline.
+- `awq.py MODEL_DIR CALIB_JSON OUT_DIR --runtime SRC/model-runtime [--loss-rows 64] [--group 128] [--rtn]` runs AWQ smoothing layer by layer (per-channel scales folded into the norms and `up_proj`), rounds every projection with GPTQ, and writes an asymmetric int4 compressed-tensors package with a `MODEL_MANIFEST.json` the model runtime verifies. A calibration row is a text row or a whole request with images, and each projection keeps only the Hessian of its inputs, so image rows fit. The scale search measures its error on the first `--loss-rows` rows. `--rtn` writes plain round-to-nearest weights instead, as a baseline. AWQ's own clipping search, which built the first AWQ packages, was dropped once GPTQ changed fewer answers.
+- `calib_mixed.py TEXT_CALIB_JSON DATA_DIR OUT_JSON` adds 256 Box requests and 64 images-in-options requests from the train splits of d3-turbo's research data to a text calibration set, drops every row that shares an image with a dev or test split, and shuffles the result. d3-turbo-INT4 was built from `calib512.json` this way, with `--loss-rows 96 --group 64`.
 - `fp8_package.py MODEL_DIR OUT_DIR --runtime SRC/model-runtime` writes an FP8 (FP8_DYNAMIC) compressed-tensors package on the CPU, keeping the GDN input projections in BF16 by default.
 - `keep_bf16.py AWQ_DIR BF16_DIR OUT_DIR LAYERS --runtime SRC/model-runtime` restores some decoder layers of an AWQ package to the BF16 checkpoint's tensors.
 - `d3q/` is the loader both builders put into a package: `d3q.load.load_d3(path)` runs the quantized weights through the package's own d3 runtime and transformers, keeping them FP8 or packed int4 on the GPU, so the package runs without the vLLM Semantic Router model runtime. `quant_eval.py ... bf16` uses it for any package that ships it.

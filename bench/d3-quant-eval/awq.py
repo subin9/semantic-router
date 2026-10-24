@@ -1,6 +1,7 @@
-"""AWQ scales then GPTQ rounding for d3: int4 weights (W4A16, group 128, asymmetric), written as a compressed-tensors package.
+"""AWQ scales then GPTQ rounding for d3, on text and image calibration rows: int4 weights (W4A16, group 128 or
+--group, asymmetric), written as a compressed-tensors package.
 
-usage: awq.py MODEL_DIR CALIB_JSON OUT_DIR --runtime SRC/model-runtime [--loss-rows 64] [--clip-tokens 4096] [--rtn | --clip]
+usage: awq.py MODEL_DIR CALIB_JSON OUT_DIR --runtime SRC/model-runtime [--loss-rows 64] [--group 128] [--rtn]
 
 The algorithm of AWQ (Lin et al., 2024) as AutoAWQ runs it, adapted to Qwen3.5's layers:
 
@@ -20,9 +21,10 @@ The algorithm of AWQ (Lin et al., 2024) as AutoAWQ runs it, adapted to Qwen3.5's
    inverse Hessian of the projection's (smoothed) calibration inputs, a group's scale and zero point taken
    from its already compensated weights. The next layer reads the BF16 layer's output.
 
-On d3-turbo this changed fewer answers than AWQ's own clipping search, which ``--clip`` keeps: per
-projection except q/k_proj, the clipping range of each output row and group is shrunk in 10 steps of 5%,
-down to half of its largest weight, then rounded to nearest.
+On d3-turbo this changed fewer answers than AWQ's own clipping search, which built the first AWQ packages.
+A calibration row is a text row of tasksource-jev-typed-decisions or, with a ``request`` key, a whole
+system_one request with images (see calib_mixed.py). Image rows run thousands of tokens, so each
+projection keeps only its input Hessian and mean |input|, summed as the rows pass, never the inputs.
 
 The package keeps every file of MODEL_DIR, one ``model.safetensors`` with the projections as
 ``weight_packed`` / ``weight_scale`` / ``weight_zero_point`` / ``weight_shape``, ``quantization_config``
@@ -46,8 +48,6 @@ import quant_eval as qe
 
 GROUP = 128
 GRID = 20
-CLIP_STEPS = 20
-CLIP_MIN = 0.5
 DAMP = 0.01  # GPTQ: fraction of the mean Hessian diagonal added to it
 ATTN = "_attn_implementation"  # layer_inputs key: the attention implementation a row ran under
 TARGETS = [
@@ -69,8 +69,9 @@ QUANTIZED = (
 )
 
 
-def fake_quant(w, group=GROUP):
+def fake_quant(w, group=None):
     """Asymmetric int4 round trip per group of input columns: (dequantized, q, scale, zero), q and zero in 0..15."""
+    group = group or GROUP
     n, k = w.shape
     g = w.float().reshape(n, k // group, group)
     lo, hi = g.amin(-1, keepdim=True), g.amax(-1, keepdim=True)
@@ -87,14 +88,11 @@ def group_params(w):
     return scale, (-lo / scale).round().clamp(0, 15)
 
 
-def gptq(weight, x):
-    """GPTQ rounding of ``weight`` [n, k] on inputs ``x`` [tokens, k]: (dequantized, q, scale, zero) as ``fake_quant``."""
+def gptq(weight, h):
+    """GPTQ rounding of ``weight`` [n, k] with input Hessian ``h`` [k, k] (sum of x^T x): (dequantized, q, scale, zero)."""
     w = weight.float().clone()
     n, k = w.shape
-    h = torch.zeros(k, k, device=w.device)
-    for c in x.split(1 << 14):
-        c = c.float()
-        h += c.t() @ c
+    h = h.clone()
     dead = h.diagonal() == 0
     h[dead, dead] = 1
     w[:, dead] = 0
@@ -157,7 +155,12 @@ def layer_inputs(model, rows):
     ]
     with torch.no_grad():
         for row in rows:
-            model.system_one(state=row["state"], questions={"q": qe.question(row)})
+            if (
+                "request" in row
+            ):  # an image row: a Box or images-in-options request as the runtime takes it
+                model.system_one(**row["request"])
+            else:
+                model.system_one(state=row["state"], questions={"q": qe.question(row)})
     for h in handles:
         h.remove()
     return hidden, kwargs
@@ -183,20 +186,33 @@ def run_layer(layer, inputs):
 
 
 def record(layer, inputs, names):
-    """Inputs of the named projections over every row, flattened to [tokens, features]."""
-    feats = {n: [] for n in names}
-    hooks = [
-        layer.get_submodule(n).register_forward_pre_hook(
-            lambda _, args, n=n: feats[n].append(
-                args[0].detach().reshape(-1, args[0].shape[-1])
-            )
-        )
-        for n in names
-    ]
+    """Per named projection, over every token of every row: the input Hessian sum x^T x and sum |x| (FP32),
+    accumulated as the rows run, so image rows of thousands of tokens never sit in memory as a whole.
+    """
+    stats = {}
+
+    def hook(n):
+        def fn(_, args):
+            x = args[0].detach().reshape(-1, args[0].shape[-1]).float()
+            st = stats.get(n)
+            if st is None:
+                f = x.shape[1]
+                st = stats[n] = {
+                    "h": torch.zeros(f, f, device=x.device),
+                    "abs": torch.zeros(f, device=x.device),
+                    "count": 0,
+                }
+            st["h"].addmm_(x.t(), x)
+            st["abs"] += x.abs().sum(0)
+            st["count"] += x.shape[0]
+
+        return fn
+
+    hooks = [layer.get_submodule(n).register_forward_pre_hook(hook(n)) for n in names]
     outs = run_layer(layer, inputs)
     for h in hooks:
         h.remove()
-    return {n: torch.cat(v) for n, v in feats.items()}, outs
+    return stats, outs
 
 
 def loss(layer, inputs, want):
@@ -206,15 +222,13 @@ def loss(layer, inputs, want):
     ) / sum(w.numel() for w in want)
 
 
-def search_scale(layer, linears, x, inputs, want):
+def search_scale(layer, linears, x_mean, inputs, want):
     """The scale over the projections' input channels that minimises the layer's output error."""
     weights = [layer.get_submodule(n).weight for n in linears]
     originals = [w.data.clone() for w in weights]
     w = torch.cat([o.float() for o in originals])
     g = w.reshape(w.shape[0], -1, GROUP).abs()
     w_mean = (g / g.amax(-1, keepdim=True).clamp(min=1e-8)).reshape(w.shape).mean(0)
-    # in chunks: a float32 copy of every calibration token does not fit next to 512 rows
-    x_mean = sum(c.abs().float().sum(0) for c in x.split(1 << 16)) / x.shape[0]
     best = (float("inf"), None, None)
     for i in range(GRID):
         a = i / GRID
@@ -250,32 +264,8 @@ def fold(layer, producer, consumers, s):
     return s
 
 
-def search_clip(weight, x, tokens):
-    """Per output row and group, the clipping bound (shrunk max |w|) that minimises the output error."""
-    x = x[torch.randperm(x.shape[0], device=x.device)[:tokens]].float()
-    n, k = weight.shape
-    groups = k // GROUP
-    xg = x.reshape(-1, groups, GROUP)
-    best_max = torch.empty(n, groups, 1, device=weight.device)
-    for start in range(0, n, 256):
-        w = weight[start : start + 256].float().reshape(-1, groups, GROUP)
-        ref = torch.einsum("tgk,ogk->tog", xg, w)
-        org_max = w.abs().amax(-1, keepdim=True)
-        best_err = torch.full(org_max.shape, float("inf"), device=w.device)
-        best = org_max.clone()
-        for i in range(int(CLIP_STEPS * (1 - CLIP_MIN))):
-            max_val = org_max * (1 - i / CLIP_STEPS)
-            clipped = w.clamp(-max_val, max_val).reshape(w.shape[0], -1)
-            q = fake_quant(clipped)[0].reshape(w.shape)
-            err = (torch.einsum("tgk,ogk->tog", xg, q) - ref).pow(2).mean(0)[..., None]
-            better = err < best_err
-            best_err = torch.where(better, err, best_err)
-            best = torch.where(better, max_val, best)
-        best_max[start : start + 256] = best
-    return best_max
-
-
 def main():
+    global GROUP
     p = argparse.ArgumentParser()
     p.add_argument("root")
     p.add_argument("calib")
@@ -286,22 +276,22 @@ def main():
         help="src/model-runtime of the semantic-router checkout",
     )
     p.add_argument("--loss-rows", type=int, default=64)
-    p.add_argument("--clip-tokens", type=int, default=4096)
-    mode = p.add_mutually_exclusive_group()
-    mode.add_argument(
+    p.add_argument(
+        "--group",
+        type=int,
+        default=GROUP,
+        help="int4 group size (input columns per scale)",
+    )
+    p.add_argument(
         "--rtn",
         action="store_true",
         help="round to nearest only: no scales, no clipping (baseline)",
     )
-    mode.add_argument(
-        "--clip",
-        action="store_true",
-        help="AWQ's clipping search and round to nearest instead of GPTQ rounding",
-    )
     args = p.parse_args()
+    GROUP = args.group
     torch.manual_seed(0)
     root, out = Path(args.root), Path(args.out)
-    rows = [r for r in json.load(open(args.calib)) if qe.usable(r)]
+    rows = [r for r in json.load(open(args.calib)) if "request" in r or qe.usable(r)]
     # prefix_bidir (d3-turbo) answers through StateOnce, which calls the projections without the layers' forward;
     # the per-row reference path runs every layer, so the hooks see each one.
     os.environ.setdefault("D3_STATE_ONCE", "0")
@@ -346,37 +336,33 @@ def main():
         ]
         info = {"layer": index}
         for producer, linears, also in [] if args.rtn else groups:
-            x = feats[linears[0]]
-            err, a, s = search_scale(layer, linears, x, loss_inputs, want)
+            st = feats[linears[0]]
+            err, a, s = search_scale(
+                layer, linears, st["abs"] / st["count"], loss_inputs, want
+            )
             s = fold(layer, producer, linears + also, s)
-            # the projections of a group read one input: one smoothed copy for all of them
-            scaled = x / s.to(x.dtype)
-            del x
+            # the group's projections now read x / s: their Hessian is H / (s s^T), one copy for all of them
+            sf = s.float()
+            scaled = {"h": st["h"] / (sf[:, None] * sf[None, :])}
             for n in linears:
                 feats[n] = scaled
-            del scaled
+            del st, scaled
             info[producer] = {"alpha": a, "loss": err}
         info["fold_error"] = loss(layer, loss_inputs, want)
         for n in names:
             m = layer.get_submodule(n)
-            x = feats.pop(n)  # freed once the last projection reading it is rounded
-            if not (args.rtn or args.clip):
-                deq, q, scale, zero = gptq(m.weight.data, x)
-            elif args.clip and not n.endswith(("q_proj", "k_proj")):
-                bound = search_clip(m.weight.data, x, args.clip_tokens)
-                w = m.weight.data.float().reshape(m.weight.shape[0], -1, GROUP)
-                m.weight.data = (
-                    w.clamp(-bound, bound).reshape(m.weight.shape).to(m.weight.dtype)
-                )
-            if args.rtn or args.clip:
+            st = feats.pop(n)  # freed once the last projection reading it is rounded
+            if args.rtn:
                 deq, q, scale, zero = fake_quant(m.weight.data)
+            else:
+                deq, q, scale, zero = gptq(m.weight.data, st["h"])
             packed[f"layers.{index}.{n}"] = (
                 q.reshape(m.weight.shape),
                 scale.squeeze(-1),
                 zero.squeeze(-1),
             )
             m.weight.data = deq.to(m.weight.dtype)
-            del x
+            del st
         info["output_error"] = loss(layer, loss_inputs, want)
         hidden = outs
         del feats, want, inputs, loss_inputs

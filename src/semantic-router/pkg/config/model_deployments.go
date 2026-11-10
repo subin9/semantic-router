@@ -39,10 +39,10 @@ type ModelDeployment struct {
 	// Unset keeps the package's limit; attached endpoints and replicas refuse it.
 	MaxModelLen *int `yaml:"max_model_len,omitempty" json:"max_model_len,omitempty"`
 	// SessionCacheGiB keeps the backbone states of earlier decision requests'
-	// states in this much device memory, so a request whose state starts with
-	// an earlier one (a conversation or agent history growing call by call)
-	// computes only the rest. Unset or 0 is off; it needs the shared-context
-	// forward, and each replica keeps its own cache.
+	// states in this much device memory, so a state that comes back (whole, or
+	// grown by a conversation or agent history) is not computed again. Unset or
+	// 0 is off; it needs the shared-context forward, and each replica keeps its
+	// own cache.
 	SessionCacheGiB *float64 `yaml:"session_cache_gib,omitempty" json:"session_cache_gib,omitempty"`
 	// Endpoint attaches a model_runtime deployment to an engine the Router does
 	// not manage (unix:///path, http://host:port or https://host:port). For a

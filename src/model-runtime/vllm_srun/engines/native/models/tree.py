@@ -42,6 +42,12 @@ class Tree:
     every layer to keep its state after the first ``mark`` prefix tokens in
     ``saved``. Every layer takes its item with ``layer()`` once per forward, in
     layer order.
+
+    A state-once package's tree (``models/branch.py`` layouts) reads its prefix
+    both ways (``state_bidirectional``, ``prefix_bidir``) and every suffix both
+    ways within itself (``block_bidirectional``, both ``prefix_*`` layouts);
+    recurrent layers stay causal. A tree that resumes a whole state has no
+    prefix tokens left in its row (``prefix`` 0).
     """
 
     is_tree = True
@@ -56,6 +62,8 @@ class Tree:
         start: int = 0,
         resume: list[dict[str, torch.Tensor]] | None = None,
         mark: int = 0,
+        state_bidirectional: bool = False,
+        block_bidirectional: bool = False,
     ):
         if (start > 0) != (resume is not None):
             raise ValueError(
@@ -63,6 +71,14 @@ class Tree:
             )
         if mark and not start < mark <= start + prefix:
             raise ValueError("a tree saves its state inside the prefix it computes")
+        if state_bidirectional and (
+            (start and prefix) or (mark and mark != start + prefix)
+        ):
+            raise ValueError("a state read both ways resumes and saves whole")
+        if prefix < 1 and not start:
+            raise ValueError("a tree needs a prefix token or a resumed state")
+        self.state_bidirectional = state_bidirectional
+        self.block_bidirectional = block_bidirectional
         self.prefix = prefix
         self.start = start
         self.resume = resume
@@ -87,6 +103,9 @@ class Tree:
         ]
         self.cu_seqlens_cpu = torch.tensor([0, *ends], dtype=torch.long)
         self.cu_seqlens = self.cu_seqlens_cpu.to(device)
+        self._ends = ends
+        self._device = device
+        self._block_keys: tuple[Any, ...] | None = None
         end = start + prefix
         self.positions = torch.cat(
             [torch.arange(start, end)]
@@ -101,6 +120,30 @@ class Tree:
             if padded_exact
             else None
         )
+
+    def block_keys(self, context: int) -> tuple[Any, ...]:
+        """For varlen attention over each suffix's keys (all ``context`` prefix keys, then its own, in a key row
+        of the context and the suffixes): the key index, the query and key boundaries (device int32, host) and
+        the longest query and key segments. The same for every layer of a tree, so built once.
+        """
+        if self._block_keys is None:
+            index: list[int] = []
+            keys = [0]
+            for start, end in zip([0, *self._ends[:-1]], self._ends, strict=True):
+                index += range(context)
+                index += range(context + start, context + end)
+                keys.append(len(index))
+            queries = [0, *self._ends]
+            self._block_keys = (
+                torch.tensor(index, dtype=torch.long).to(self._device),
+                torch.tensor(queries, dtype=torch.int32).to(self._device),
+                queries,
+                max(self.lengths),
+                torch.tensor(keys, dtype=torch.int32).to(self._device),
+                keys,
+                context + max(self.lengths),
+            )
+        return self._block_keys
 
     def layer(self) -> dict[str, torch.Tensor] | None:
         """The next layer's resumed state (None when the tree starts at 0); call once per layer, in order."""
@@ -179,7 +222,8 @@ def tree_attention(
 
     A resumed tree's saved keys and values come first (``c`` of them): the
     prefix queries see them all and their own keys causally, the suffix queries
-    every prefix key."""
+    every prefix key. A state-once tree reads its prefix (``state_bidirectional``)
+    or its suffixes (``block_bidirectional``) both ways."""
     saved = tree.layer()
     dtype = query.dtype
     if query.is_cuda and torch.is_autocast_enabled("cuda"):
@@ -188,6 +232,7 @@ def tree_attention(
     if tree.session:
         key, value = _session_keys(key.to(dtype), value.to(dtype), tree, saved)
     c = key.shape[2] - query.shape[2]
+    grouped = key, value
     if groups > 1:
         b, h, n, d = key.shape
         key = key[:, :, None].expand(b, h, groups, n, d).reshape(b, h * groups, n, d)
@@ -195,16 +240,21 @@ def tree_attention(
             value[:, :, None].expand(b, h, groups, n, d).reshape(b, h * groups, n, d)
         )
     q, k, v = query.to(dtype), key.to(dtype), value.to(dtype)
-    if c:
+    if not p:
+        head = q[:, :, :0]
+    elif c:
         head = _merge(
             _attend(q[:, :, :p], k[:, :, c : c + p], v[:, :, c : c + p], True, scaling),
             _attend(q[:, :, :p], k[:, :, :c], v[:, :, :c], False, scaling),
         ).to(dtype)
     else:
+        causal = tree.prefix_mask is None and not tree.state_bidirectional
         head = F.scaled_dot_product_attention(
-            q[:, :, :p], k[:, :, :p], v[:, :, :p], attn_mask=tree.prefix_mask, is_causal=tree.prefix_mask is None,
-            scale=scaling,
+            q[:, :, :p], k[:, :, :p], v[:, :, :p], attn_mask=tree.prefix_mask, is_causal=causal, scale=scaling,
         )  # fmt: skip
+    if tree.block_bidirectional:
+        tail = _block_attention(q[:, :, p:], *grouped, c + p, tree, scaling, groups)
+        return torch.cat([head[0].transpose(0, 1), tail.to(dtype)], dim=0)[None]
     out_prefix, lse_prefix = _attend(
         q[:, :, p:], k[:, :, : c + p], v[:, :, : c + p], False, scaling
     )
@@ -222,6 +272,29 @@ def tree_attention(
     tail = torch.lerp(out_own.float(), out_prefix[0].transpose(0, 1).float(), weight)
     out = torch.cat([head[0].transpose(0, 1), tail.to(dtype)], dim=0)
     return out[None]
+
+
+def _block_attention(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    context: int,
+    tree: Tree,
+    scaling: float,
+    groups: int,
+) -> torch.Tensor:
+    """Every suffix query ([1, H, S, D]) over all ``context`` prefix keys and its own suffix's keys both ways, as
+    a state-once block reads them, in one variable-length call (``branch._attend``: no padding, keys with
+    ``H / groups`` heads); the packed outputs [S, H, D]."""
+    from .branch import _attend
+
+    index, cu_q, host_q, max_q, cu_k, host_k, max_k = tree.block_keys(context)
+    q = query[0].transpose(0, 1).contiguous()
+    k = key[0].transpose(0, 1)[index].contiguous()
+    v = value[0].transpose(0, 1)[index].contiguous()
+    return _attend(
+        q, k, v, (cu_q, host_q, max_q), (cu_k, host_k, max_k), causal=False, scale=scaling, groups=groups,
+    )  # fmt: skip
 
 
 def _merge(
@@ -266,14 +339,18 @@ def prefix_rule(
     saved: dict[str, torch.Tensor] | None,
     conv_rows: torch.Tensor,
     window: int,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor | None, torch.Tensor]:
     """The gated delta rule over a session tree's prefix (q, k, v, g, beta of its row tokens) from the resumed
     state, cut at the mark, whose state and convolution inputs it keeps (``conv_rows`` holds the ``window - 1``
-    inputs before the row, then the row's). Returns the prefix outputs and the prefix-end state.
+    inputs before the row, then the row's). Returns the prefix outputs (None for a tree that resumed its whole
+    prefix) and the prefix-end state.
     """
     p = tree.prefix
     own = tree.mark - tree.start if tree.mark else p
     initial = None if saved is None else saved["S"]
+    if not p:
+        assert initial is not None
+        return None, initial
 
     def run(
         lo: int, hi: int, state: torch.Tensor | None
@@ -379,7 +456,9 @@ def tree_gated_delta(
     out_suffix = suffix_rule(
         rule, tree, query[:, p:], key[:, p:], value[:, p:], g[:, p:], beta[:, p:], start
     )
-    core = torch.cat([out_prefix, out_suffix], dim=1)
+    core = (
+        out_suffix if out_prefix is None else torch.cat([out_prefix, out_suffix], dim=1)
+    )
     core = m.norm(core.reshape(-1, m.head_v_dim), z.reshape(-1, m.head_v_dim))
     out: torch.Tensor = m.out_proj(core.reshape(1, length, -1))
     return out

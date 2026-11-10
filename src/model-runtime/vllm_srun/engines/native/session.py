@@ -15,6 +15,10 @@ growing state (whose last tokens may tokenize differently once text follows them
 with other questions both find it. Lookup hashes a prefix in blocks of ``STRIDE`` tokens, one pass over its tokens,
 and confirms a hit token by token. Entries live on the model's device and are evicted least recently used under a
 byte budget.
+
+A state that attends to itself both ways (a ``prefix_bidir`` state-once package) changes all its tokens' states
+when text is added to it, so only the whole state is reusable: a ``whole`` cache saves each state at its end and
+resumes a request whose state is exactly a saved one, which then computes its question blocks only.
 """
 
 from __future__ import annotations
@@ -28,8 +32,9 @@ import torch
 
 STRIDE = 256
 MARGIN = 32
-# A state shorter than this is not saved: the forward it would save costs less than the copy.
-MIN_TOKENS = 1024
+# A state shorter than this is not saved: below it a session tree, which runs eager and launches about twice the
+# kernels of a branched or padded forward, costs more than the tokens it skips (docs/records/session-cache.md).
+MIN_TOKENS = 2048
 
 
 def nbytes(value: Any) -> int:
@@ -72,9 +77,11 @@ class SessionCache:
         stride: int = STRIDE,
         margin: int = MARGIN,
         min_tokens: int = MIN_TOKENS,
+        whole: bool = False,
     ):
         if budget <= 0:
             raise ValueError("a session cache needs a positive byte budget")
+        self.whole = whole
         self.budget = budget
         self.stride = stride
         self.margin = margin
@@ -87,21 +94,31 @@ class SessionCache:
 
     def mark(self, state_tokens: int, start: int, prefix: int) -> int:
         """Where to save a prefix of ``prefix`` tokens whose first ``state_tokens`` are the state, computed from
-        ``start``: the last multiple of ``stride`` at least ``margin`` before the state's end, or 0 for none (a
-        short state, or a mark the resumed position already reaches)."""
+        ``start``: the last multiple of ``stride`` at least ``margin`` before the state's end (a ``whole`` cache:
+        the state's end), or 0 for none (a short state, or a mark the resumed position already reaches).
+        """
+        if self.whole:
+            fits = self.min_tokens <= state_tokens <= prefix
+            return state_tokens if fits and start == 0 else 0
         mark = min(state_tokens - self.margin, prefix) // self.stride * self.stride
         return mark if mark >= self.min_tokens and mark > start else 0
 
     def match(self, tokens: list[int]) -> tuple[Entry | None, int]:
         """The entry and position to resume ``tokens`` (a prefix) from: the furthest saved position, before its
-        last token, whose tokens all match; (None, 0) for none."""
+        last token, whose tokens all match; a ``whole`` cache resumes only all of ``tokens``, an exact saved state.
+        (None, 0) for none."""
         with self._lock:
-            if len(tokens) <= self.min_tokens or not self.entries:
+            if len(tokens) < self.min_tokens + (not self.whole) or not self.entries:
                 self.misses += 1
                 return None, 0
-            hashes = block_hashes(tokens[: len(tokens) - 1], self.stride)
             best: tuple[int, int] | None = None
-            for key, entry in self.entries.items():
+            if self.whole:
+                key = hash(tuple(tokens))
+                entry = self.entries.get(key)
+                if entry is not None and entry.tokens == tokens:
+                    best = (key, len(tokens))
+            hashes = [] if self.whole else block_hashes(tokens[:-1], self.stride)
+            for key, entry in self.entries.items() if hashes else ():
                 saved = len(entry.tokens)
                 blocks = saved // self.stride
                 if blocks >= len(hashes) or (best is not None and saved <= best[1]):
@@ -117,14 +134,19 @@ class SessionCache:
             return self.entries[best[0]], best[1]
 
     def insert(self, tokens: list[int], layers: list[dict[str, torch.Tensor]]) -> None:
-        """Save the state after ``tokens`` (a multiple of ``stride`` long), evicting the least recently used."""
-        if len(tokens) % self.stride:
+        """Save the state after ``tokens`` (a multiple of ``stride`` long, unless the cache is ``whole``), evicting
+        the least recently used."""
+        if len(tokens) % self.stride and not self.whole:
             raise ValueError("a saved state ends on a multiple of the stride")
         entry = Entry(list(tokens), layers)
         with self._lock:
             if entry.bytes > self.budget:
                 return
-            key = block_hashes(entry.tokens, self.stride)[-1]
+            key = (
+                hash(tuple(entry.tokens))
+                if self.whole
+                else block_hashes(entry.tokens, self.stride)[-1]
+            )
             old = self.entries.pop(key, None)
             if old is not None:
                 self.used -= old.bytes
@@ -154,4 +176,5 @@ class SessionCache:
                 "resumed_tokens": self.resumed_tokens,
                 "stride": self.stride,
                 "min_tokens": self.min_tokens,
+                "whole": self.whole,
             }

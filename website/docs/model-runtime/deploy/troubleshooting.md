@@ -148,7 +148,7 @@ reasons:
 | `max_model_len applies to Decision models only` | Remove `max_model_len` from this deployment; other models keep their own input limits. |
 | `golden answers are malformed; max_model_len N may be below` | Raise `max_model_len`: the model's own check questions need more tokens. See [Engine arguments](./engine-args.md#input-limit). |
 | `session_cache_gib: needs the shared-context forward` | The session cache resumes inside shared-context trees: remove `enable_shared_context: false`, or remove `session_cache_gib`. See [Engine arguments](./engine-args.md#session-cache). |
-| `session cache: the backbone ...` | This model's state attends to later tokens or has no shared-context forward (Decision 3.0, encoders), so no saved state is reusable. Remove `session_cache_gib` from this deployment. |
+| `session cache: the backbone ...` | The model reads each question's whole prompt both ways (the released Decision 3.0 sizes) or has no shared-context forward (encoders), so no saved state is reusable. Remove `session_cache_gib` from this deployment, or serve a state-once Decision 3.0 package such as `vllm-sr/d3-turbo`. |
 
 When one model of a process fails, the other models in that process keep
 serving.

@@ -2718,7 +2718,7 @@ global:
       # cache and a Decision model's input limit; each one left out keeps the
       # runtime's default (website/docs/model-runtime/deploy/engine-args.md).
       # session_cache_gib keeps earlier requests' states in device memory, so a
-      # state that grows call by call computes only what it added.
+      # state that comes back whole or grown is not computed again.
       decision-kai-tuned:
         provider: model_runtime
         artifact: vllm-sr/Decision-2.0-Kai-0.6B

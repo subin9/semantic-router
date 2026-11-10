@@ -191,9 +191,9 @@ def add_serve_arguments(parser: argparse.ArgumentParser) -> None:
         default=ENGINE_DEFAULTS.session_cache_gib,
         help=(
             "device memory for the backbone states of earlier decision requests' "
-            "states, so a request whose state starts with an earlier one (a growing "
-            "conversation or agent history) computes only the rest; needs the "
-            "shared-context forward, 0 turns it off (default: %(default)s)"
+            "states, so a state that comes back (whole, or grown by a conversation or "
+            "agent history) is not computed again; needs the shared-context forward, "
+            "0 turns it off (default: %(default)s)"
         ),
     )
     parser.add_argument(

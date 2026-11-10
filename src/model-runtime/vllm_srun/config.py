@@ -61,10 +61,10 @@ class EngineArgs:
     a Decision model may have: it lowers the package's limit, never raises it,
     and a longer question fails with ``max_length_exceeded`` before any
     forward; None keeps the package's limit. ``session_cache_gib`` > 0 keeps
-    the backbone states of earlier requests' shared states in that much device
-    memory, so a later request whose state starts with the same tokens (a
-    conversation or agent history growing call by call) computes only what
-    follows them; it needs the shared-context forward, and 0 turns it off.
+    the backbone states of earlier requests' states in that much device
+    memory, so a state that comes back (whole, or grown by a conversation or
+    agent history) is not computed again; it needs the shared-context forward,
+    and 0 turns it off.
     """
 
     max_num_seqs: int | None = None

@@ -458,7 +458,9 @@ def _tree_gated_delta(
         )  # fmt: skip
     start = state.expand(n, *state.shape[1:]).contiguous()
     out_suffix = suffix_rule(rule, tree, sq, sk, sv, sg, sbeta, start)
-    core = torch.cat([out_prefix, out_suffix], dim=1)
+    core = (
+        out_suffix if out_prefix is None else torch.cat([out_prefix, out_suffix], dim=1)
+    )
     out = kernels("gated_rmsnorm")(
         core.reshape(-1, m.head_v_dim).contiguous(),
         z.reshape(-1, m.head_v_dim).contiguous(),

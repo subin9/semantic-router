@@ -882,6 +882,7 @@ class StateOnceModel(Decision3Model):
             if self._as_rows(items)
             and not self._static_branches()
             and items[0].readouts is None
+            and not self._resumes(items[0])
             else self._branch_forwards(items)
         )
         tokens = sum(item.cost or len(item.ids) for item in items)
@@ -893,6 +894,11 @@ class StateOnceModel(Decision3Model):
                     sample - self._token_seconds[lane]
                 )
         return out
+
+    def _resumes(self, item: Item) -> bool:
+        """Whether the engine's session cache saves or resumes this item's state, which it does in a branched
+        forward only."""
+        return item.state is not None and self.engine_model.resumes(len(item.state.ids))
 
     def _static_branches(self) -> bool:
         static = getattr(self.engine_model, "static_branches", None)

@@ -42,6 +42,7 @@ from .models.branch import (
     CAUSAL,
     LAYOUTS,
     PREFIX_BIDIR,
+    PREFIX_CAUSAL,
     Branches,
     StaticBranches,
     pack_layout,
@@ -237,14 +238,20 @@ class NativeEngineModel(EngineModel):
             reason = self.session_unavailable()
             if reason:
                 raise RuntimeError(f"session cache: {reason}")
-            self.session = SessionCache(options.session_cache_bytes)
+            # A state read both ways is reusable only whole (``session.py``).
+            self.session = SessionCache(
+                options.session_cache_bytes, whole=self._layout() == PREFIX_BIDIR
+            )
+
+    def _layout(self) -> str:
+        return str(getattr(self.backbone, "layout", CAUSAL))
 
     def session_unavailable(self) -> str | None:
         """None when this model's shared-context trees can save and resume session states, else why not."""
         if self.spec.encoder or not hasattr(self.backbone, "forward_tree"):
             return "the backbone has no shared-context tree forward"
-        if self.noncausal or getattr(self.backbone, "layout", "causal") != "causal":
-            return "the backbone's state attends to later tokens, so its prefix state is not reusable"
+        if self.noncausal or self._layout() not in LAYOUTS:
+            return "the backbone reads each question's whole prompt both ways, so no state is reusable"
         if self.gated:
             return "gated adapters change the backbone per request"
         return None
@@ -390,9 +397,11 @@ class NativeEngineModel(EngineModel):
             resume = None if entry is None else entry.layers
             mark = self.session.mark(state_tokens, start, len(tokens))
         packed = torch.cat([prefix[start:], *suffixes])[None].to(self.device)
+        layout = self._layout()
         tree = Tree(
             len(prefix) - start, lengths, padded(max(lengths)), self.device, padded_exact,
-            start=start, resume=resume, mark=mark,
+            start=start, resume=resume, mark=mark, state_bidirectional=layout == PREFIX_BIDIR,
+            block_bidirectional=layout in (PREFIX_BIDIR, PREFIX_CAUSAL),
         )  # fmt: skip
         hidden = cast(models.TreeBackbone, self.backbone).forward_tree(packed, tree)
         if mark:
@@ -763,6 +772,54 @@ class NativeEngineModel(EngineModel):
             return out[: len(blocks)].clone()
 
     def branch(self, batch: BranchBatch) -> torch.Tensor:
+        """Each state once and every block branched from it (``_branch_packed``); with a session cache, a text
+        state long enough to save runs as a tree that saves or resumes it (``_branch_sessions``).
+        """
+        if self.session is not None and batch.readouts is None:
+            sessions = {
+                owner
+                for owner in batch.owners
+                if (batch.media is None or batch.media[owner] is None)
+                and self.resumes(len(batch.states[owner]))
+            }
+            if sessions:
+                return self._branch_sessions(batch, sessions)
+        return self._branch_packed(batch)
+
+    def _branch_sessions(self, batch: BranchBatch, sessions: set[int]) -> torch.Tensor:
+        """The blocks of each state in ``sessions`` as one session tree of that state (``_run_tree``, under the
+        backbone's state-once layout), the others branched as usual; the last token's hidden state per block.
+        """
+        hidden: list[torch.Tensor | None] = [None] * len(batch.blocks)
+        rest = [i for i, owner in enumerate(batch.owners) if owner not in sessions]
+        if rest:
+            used = sorted({batch.owners[i] for i in rest})
+            renumber = {state: index for index, state in enumerate(used)}
+            others = BranchBatch(
+                [batch.states[state] for state in used],
+                [batch.blocks[i] for i in rest],
+                [renumber[batch.owners[i]] for i in rest],
+                [batch.media[state] for state in used] if batch.media else None,
+            )
+            for i, row in zip(rest, self._branch_packed(others), strict=True):
+                hidden[i] = row
+        with torch.inference_mode(), self.autocast():
+            for state in sorted(sessions):
+                members = [i for i, owner in enumerate(batch.owners) if owner == state]
+                tokens = batch.states[state]
+                rows = self._run_tree(
+                    torch.tensor(tokens, dtype=torch.long),
+                    [torch.tensor(batch.blocks[i], dtype=torch.long) for i in members],
+                    padded_exact=False,
+                    state_tokens=len(tokens),
+                )
+                for row, i in enumerate(members):
+                    hidden[i] = rows[row, len(batch.blocks[i]) - 1]
+        out = [row for row in hidden if row is not None]
+        assert len(out) == len(hidden)
+        return torch.stack([row.to(out[0].dtype) for row in out])
+
+    def _branch_packed(self, batch: BranchBatch) -> torch.Tensor:
         """Each state once and every block branched from it, in one packed row (``models/branch.py``).
 
         The blocks are laid out grouped by their state, the order the layout

@@ -32,7 +32,7 @@ global:
 | `--dtype` | `dtype` | `auto` | Precision the model computes in: `auto`, `float32`, `bfloat16` or `float16`. |
 | `--enable-shared-context`, `--no-enable-shared-context` | `enable_shared_context` | the model family's | Compute the shared state of a multi-question decision request once. |
 | `--max-model-len` | `max_model_len` | the package's limit | Most input tokens one question of a Decision model may have; lowers the package's limit ([below](#input-limit)). |
-| `--session-cache-gib` | `session_cache_gib` | `0` (off) | Device memory for the states of earlier requests, so a request whose state starts with an earlier one computes only the rest ([below](#session-cache)). |
+| `--session-cache-gib` | `session_cache_gib` | `0` (off) | Device memory for the states of earlier requests, so a repeated or growing state is not computed again ([below](#session-cache)). |
 
 ## Batching
 
@@ -202,47 +202,51 @@ and `usage.input_tokens` counts the state once.
 
 ## Session cache
 
-A Router rule that reads the conversation (`history`, `previous_turns` or
-`tool_results`) sends a state that grows call after call, and an agent loop
-does the same. `--session-cache-gib` keeps the backbone state of each such
-state in device memory, like vLLM's prefix cache does for KV blocks, and a
-later request whose state starts with the same tokens resumes from it and
-computes only what follows:
+Rules that read one request at different points ask about the same state more
+than once, and rules that read the conversation (`history`, `previous_turns` or
+`tool_results`) and agent loops send a state that grows call after call.
+`--session-cache-gib` keeps the backbone state of earlier states in device
+memory, as vLLM's prefix cache keeps KV blocks, and a later request reuses it:
 
 ```yaml title="config.yaml"
 global:
   model_catalog:
     deployments:
-      decision-eos:
+      decision-turbo:
         provider: model_runtime
-        artifact: vllm-sr/Decision-2.0-Eos-0.8B
-        device: cuda:0
-        session_cache_gib: 2
+        artifact: vllm-sr/d3-turbo
+        device: rocm:0
+        session_cache_gib: 8
 ```
 
-- **What it saves.** For a decoder whose state never sees later tokens
-  (Decision 2.0, and the Decision 1.0 Qwen3.5 sizes with shared context on),
-  the state of every layer at a point inside the request's state: the keys and
-  values of the full-attention layers before it and the recurrent state of the
-  Gated DeltaNet layers there. The point is the last multiple of 256 tokens at
-  least 32 tokens before the state's end, so states shorter than about 1,056
-  tokens are not saved.
-- **Speed.** A growing state costs about what it adds per call, not its whole
-  length. On one RTX 4070 Ti SUPER, Decision 2.0 Eos-0.8B with three questions
-  per call answered a 5,800-token state in 76 ms instead of 178 ms
+- **Which models.** Decision 3.0 packages that read their state once
+  (`attention_mode` `prefix_bidir`, `prefix_causal` or `causal`, such as
+  `vllm-sr/d3-turbo`), and the causal decoders served with shared context
+  (Decision 2.0, and Decision 1.0's Qwen3.5 sizes with
+  `enable_shared_context: true`). The released Decision 3.0 sizes read each
+  question's whole prompt both ways, so none of their state is reusable, and the
+  runtime refuses the argument there, as it does for encoders and with
+  `enable_shared_context: false`.
+- **What is reused.** A state read both ways (`prefix_bidir`) changes all its
+  tokens when text is added to it, so it is reused only when it comes back
+  whole, with other questions: the request then computes its questions only. A
+  causal state is saved at the last multiple of 256 tokens at least 32 before
+  its end, and a later state that starts with the same tokens resumes from there.
+  States under 2,048 tokens are not saved, because the tree that saves or
+  resumes one runs eager and costs more than it skips below that.
+- **Speed.** On one MI300X, d3-turbo answered three questions about a
+  5,800-token state it had seen before in 122 ms instead of 709 ms, after a
+  first call 4.8% slower than without the cache. A growing state cost d3-flash
+  (under `prefix_causal`) 106 ms per call at 5,800 tokens instead of 230 ms
   ([record](https://github.com/vllm-project/semantic-router/blob/main/src/model-runtime/docs/records/session-cache.md)).
-- **Answers.** Nothing is approximated, but a resumed request rounds as any
-  other packing of the same tokens does, as shared context does: no decision
-  changed in that record, and probabilities moved by at most 0.009. That is why
-  it is off by default.
+- **Answers.** Nothing is approximated, but a reused state rounds as any other
+  packing of the same tokens does: no decision changed on the MI300X, and
+  probabilities moved by at most 0.015. That is why it is off by default.
 - **Memory.** The budget counts in full when the runtime places the model, and
-  the least recently used states leave first. A saved state of Eos-0.8B takes
-  19.5 MB plus 12 KiB per token before its point; larger models take more.
-- **Where it applies.** It needs the shared-context forward, so the runtime
-  refuses it with `enable_shared_context: false`, and on models whose state
-  attends to later tokens (Decision 3.0, encoders). Each replica keeps its own
-  cache, so a conversation resumes only on the replica that answered its last
-  call.
+  the least recently used states leave first. A saved d3-turbo state takes
+  154 MB plus 64 KiB per token; a 5,800-token state, 534 MB.
+- **Replicas.** Each replica keeps its own cache, so a state is reused only on
+  the replica that answered it before.
 
 ## Input limit
 

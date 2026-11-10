@@ -271,6 +271,124 @@ def test_the_state_length_ends_where_the_question_text_begins(qwen35_package):
         runtime.stop()
 
 
+# Decision 3.0 state-once packages: the state's tree under the package's layout
+
+
+def d3_runtime(tmp_path, layout, gib):
+    from vllm_srun.testing.decision3 import write_fixture
+
+    package = write_fixture(tmp_path / f"d3-{layout}-{gib}", layout, seed=31)
+    args = {"session_cache_gib": gib} if gib else {}
+    return serve(package, dtype="float32", **args)
+
+
+@pytest.mark.parametrize("layout", ["prefix_causal", "prefix_bidir", "causal"])
+def test_a_state_once_tree_resumed_from_its_saved_state_matches_the_whole_tree(
+    tmp_path, layout
+):
+    runtime = d3_runtime(tmp_path, layout, 0)
+    try:
+        layers = runtime.served[0].model.engine_model.backbone
+        assert layers.layout == layout
+        torch.manual_seed(0)
+        prefix, lengths = 120, [9, 14, 6]
+        # A state read both ways is saved and resumed whole; a causal one inside.
+        mark = prefix if layout == "prefix_bidir" else 64
+        ids = torch.randint(5, 300, (prefix + sum(lengths),))
+        flags = {
+            "state_bidirectional": layout == "prefix_bidir",
+            "block_bidirectional": layout != "causal",
+        }
+        cpu = torch.device("cpu")
+
+        def run(
+            start: int, resume: list | None, save: int
+        ) -> tuple[torch.Tensor, Tree]:
+            tree = Tree(
+                prefix - start, lengths, 16, cpu, False, start=start, resume=resume, mark=save, **flags
+            )  # fmt: skip
+            with torch.inference_mode():
+                return layers.forward_tree(ids[start:][None], tree)[0], tree
+
+        whole, _ = run(0, None, 0)
+        saving, tree = run(0, None, mark)
+        assert torch.allclose(saving, whole, atol=1e-5)
+        resumed, _ = run(mark, tree.saved, 0)
+        assert torch.allclose(resumed, whole[mark:], atol=1e-5)
+    finally:
+        runtime.stop()
+
+
+@pytest.mark.parametrize("layout", ["prefix_causal", "prefix_bidir"])
+def test_a_state_once_session_answers_as_the_branched_forward(tmp_path, layout):
+    plain = d3_runtime(tmp_path, layout, 0)
+    cached = d3_runtime(tmp_path, layout, 0.25)
+    try:
+        cache = cache_of(cached)
+        assert cache.whole == (layout == "prefix_bidir")
+        asked = [
+            QUESTIONS,
+            {"next": QUESTIONS["next"]},
+            {"urgent": QUESTIONS["urgent"]},
+        ]
+        for state in states():
+            # Each state again with other questions: a whole state resumes on its repeat.
+            for questions in asked:
+                want = flat(decide(plain, state, questions))
+                got = flat(decide(cached, state, questions))
+                assert got == pytest.approx(want, abs=2e-5)
+        receipt = cache.receipt()
+        assert receipt["saves"] >= 4 and receipt["hits"] >= 8
+        assert receipt["resumed_tokens"] > 0
+    finally:
+        plain.stop()
+        cached.stop()
+
+
+def test_a_merged_forward_runs_long_states_as_trees_and_short_ones_branched(tmp_path):
+    plain = d3_runtime(tmp_path, "prefix_causal", 0)
+    cached = d3_runtime(tmp_path, "prefix_causal", 0.25)
+    try:
+        cache_of(cached)
+        long, short = states()[-1], "A short state about a refund."
+        want, got = (
+            [
+                value
+                for state in (long, short, long)
+                for value in runtime.served[0].model.plan(state, QUESTIONS).items
+            ]
+            for runtime in (plain, cached)
+        )
+        # One run over the items of three requests, as merged batches do: one long state twice, one short.
+        expected = plain.served[0].model.run(want)
+        merged = cached.served[0].model.run(got)
+        assert len(merged) == len(expected)
+        for left, right in zip(merged, expected, strict=True):
+            assert left == pytest.approx(right, abs=2e-5)
+        assert cached.served[0].model.engine_model.session.receipt()["saves"] >= 1
+    finally:
+        plain.stop()
+        cached.stop()
+
+
+def test_a_released_decision_3_package_refuses_the_session_cache(tmp_path):
+    from vllm_srun.testing.decision3 import write_fixture
+
+    package = write_fixture(tmp_path / "d3", "text", seed=31)
+    runtime = Runtime(
+        ServeConfig(
+            models=(
+                ModelConfig(model=str(package), device="cpu", session_cache_gib=0.25),
+            )
+        )
+    )
+    try:
+        with pytest.raises(RuntimeError, match="whole prompt both ways"):
+            runtime.start(background=False)
+    finally:
+        runtime.stop()
+
+
 # Engine arguments
 
 
@@ -341,7 +459,8 @@ def _fused_device():
 
 
 @pytest.mark.gpu
-def test_the_fused_gated_delta_tree_resumes_as_the_whole_tree(monkeypatch):
+@pytest.mark.parametrize("layout", ["causal", "prefix_causal", "prefix_bidir"])
+def test_the_fused_gated_delta_tree_resumes_as_the_whole_tree(monkeypatch, layout):
     from vllm_srun.engines.native import fast
 
     from .test_gpu_fast_path import build, qwen3_5
@@ -361,7 +480,13 @@ def test_the_fused_gated_delta_tree_resumes_as_the_whole_tree(monkeypatch):
         or fused(m, p, normed, tree, kernels),
     )
     torch.manual_seed(0)
-    prefix, mark, lengths = 700, 512, [40, 25, 60]
+    prefix, lengths = 700, [40, 25, 60]
+    # A state read both ways is saved and resumed whole; a causal one inside.
+    mark = prefix if layout == "prefix_bidir" else 512
+    flags = {
+        "state_bidirectional": layout == "prefix_bidir",
+        "block_bidirectional": layout != "causal",
+    }
     ids = torch.randint(5, 1000, (prefix + sum(lengths),))
     gpu = accelerator.torch_device(device)
 
@@ -375,6 +500,7 @@ def test_the_fused_gated_delta_tree_resumes_as_the_whole_tree(monkeypatch):
             start=start,
             resume=resume,
             mark=save,
+            **flags,
         )
         with torch.inference_mode(), torch.autocast(gpu.type, dtype=torch.bfloat16):
             return module.forward_tree(ids[start:][None].to(gpu), tree)[0].float(), tree
@@ -387,3 +513,49 @@ def test_the_fused_gated_delta_tree_resumes_as_the_whole_tree(monkeypatch):
     # BF16: the resumed rows round as another packing of the same rows would.
     assert (saving - whole).abs().max().item() <= 2e-2 * scale
     assert (resumed - whole[mark:]).abs().max().item() <= 2e-2 * scale
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("layout", ["prefix_causal", "prefix_bidir"])
+def test_a_state_once_session_answers_as_the_branched_forward_on_the_gpu(
+    tmp_path, layout
+):
+    from vllm_srun.testing.decision3 import write_fixture
+
+    _, device = _fused_device()
+    name = f"{'rocm' if device.arch == 'gfx942' else 'cuda'}:{device.index}"
+    package = write_fixture(tmp_path / layout, layout, seed=31)
+    runtime = Runtime(
+        ServeConfig(
+            models=(
+                ModelConfig(model=str(package), device=name, name="plain"),
+                ModelConfig(
+                    model=str(package),
+                    device=name,
+                    name="cached",
+                    session_cache_gib=0.25,
+                ),
+            ),
+            result_cache_entries=0,
+        )
+    )
+    runtime.start(background=False)
+    try:
+        cached = next(s for s in runtime.served if s.config.name == "cached")
+        session = cached.model.engine_model.session
+        assert session is not None
+        for key, value in POLICY.items():
+            setattr(session, key, value)
+        for state in states():
+            for questions in (QUESTIONS, {"next": QUESTIONS["next"]}):
+                answers = {}
+                for model in ("plain", "cached"):
+                    body = {"model": model, "state": state, "questions": questions}
+                    status, answer = asyncio.run(runtime.call("decisions", body))
+                    assert status == 200, answer
+                    answers[model] = flat(answer["answers"])
+                # BF16: a tree and a branched forward round apart (test_state_once.py BF16_TOLERANCE).
+                assert answers["cached"] == pytest.approx(answers["plain"], abs=0.03)
+        assert session.receipt()["hits"] >= 4
+    finally:
+        runtime.stop()

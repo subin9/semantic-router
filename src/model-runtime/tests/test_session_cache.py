@@ -345,9 +345,32 @@ def test_a_state_once_session_answers_as_the_branched_forward(tmp_path, layout):
         cached.stop()
 
 
-def test_a_merged_forward_runs_long_states_as_trees_and_short_ones_branched(tmp_path):
+def test_an_agent_loop_state_resumes_as_its_tool_results_grow(tmp_path):
     plain = d3_runtime(tmp_path, "prefix_causal", 0)
     cached = d3_runtime(tmp_path, "prefix_causal", 0.25)
+    try:
+        cache = cache_of(cached)
+        request, results = TURNS[0], TURNS[1:] * 3
+        for n in range(1, len(results), 4):
+            # The Router's parts arrive with sorted keys: the request, then the tool results that grow.
+            state = {"request": request, "tool_results": "\n\n".join(results[:n])}
+            want = flat(decide(plain, state, QUESTIONS))
+            got = flat(decide(cached, state, QUESTIONS))
+            assert got == pytest.approx(want, abs=2e-5)
+        receipt = cache.receipt()
+        # Every call after the first resumes the previous call's state.
+        assert receipt["misses"] == 1 and receipt["hits"] == 4
+    finally:
+        plain.stop()
+        cached.stop()
+
+
+@pytest.mark.parametrize("layout", ["prefix_causal", "prefix_bidir"])
+def test_a_merged_forward_runs_long_states_as_trees_and_short_ones_branched(
+    tmp_path, layout
+):
+    plain = d3_runtime(tmp_path, layout, 0)
+    cached = d3_runtime(tmp_path, layout, 0.25)
     try:
         cache_of(cached)
         long, short = states()[-1], "A short state about a refund."

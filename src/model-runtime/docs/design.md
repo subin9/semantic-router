@@ -427,8 +427,8 @@ former `profile` onto these arguments.
 **Session cache.** With `session_cache_gib` above 0, a decoder whose state
 never attends to what follows it saves its backbone state inside a request's
 state and reuses it for a later request (`engines/native/session.py`), so a
-conversation or agent history that grows call by call computes only what
-follows the last call's state. The state runs as a tree (`models/tree.py`):
+state that grows call by call, as an agent loop's tool results do, computes
+only what follows the last call's state. The state runs as a tree (`models/tree.py`):
 the shared-context tree of a causal decoder (Decision 2.0, Decision 1.0's
 Qwen3.5 sizes) or, for a Decision 3.0 state-once package, the request's state
 and its question blocks under the package's layout (`Tree.state_bidirectional`,

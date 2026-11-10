@@ -1,6 +1,6 @@
 """Session cache: the backbone state of a request's prefix, saved after its forward and resumed by later requests.
 
-An agent, or a Router rule that reads the conversation, asks about a state that grows call after call, so most of
+An agent loop (a Router rule that reads ``tool_results``) asks about a state that grows call after call, so most of
 one request's prefix is the prefix of an earlier one. After a shared-context forward the engine saves the backbone
 state at a mark inside the request's state (``mark``); a later request whose prefix starts with the same tokens
 resumes from the furthest saved position it matches and computes only the tokens after it (``Tree.start``).

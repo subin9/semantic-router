@@ -31,10 +31,11 @@ Six long states from the public `tasksource/tasksource-jev-typed-decisions`
 test split (court opinions, Wikipedia claim evidence, a retrieval puzzle), each
 cut to its first 24,000 characters: 5,806 state tokens at the median. Every
 call asks three questions. **Repeat:** each whole state is asked four times,
-each time its own question and two others from a fixed pool, as rules that
-read one request at different points would. **Grow:** each state arrives in 8
-steps, step k holding the first k/8 of its characters, as a conversation's
-calls would, with the same three questions. Each run clears the cache and
+each time its own question and two others from a fixed pool, as a decision's
+rules and then its `systemone` algorithm ask one deployment about the same
+user message. **Grow:** each state arrives in 8 steps, step k holding the
+first k/8 of its characters, as an agent loop's calls would, with the same
+three questions. Each run clears the cache and
 sends every state's calls in order. Tables give the median over the six
 states of each state's median over 3 runs, after one untimed pass over one
 state.

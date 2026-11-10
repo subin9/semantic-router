@@ -10,9 +10,9 @@ tree without the cache: what the cache path computes when it resumes nothing). I
 ``Runtime.call("decisions", ...)``. Each line of STATES is ``{"id", "state", "questions"}``.
 
 - ``grow``: the state arrives in ``--steps`` growing prefixes (step k holds the first k / steps of its
-  characters), as one conversation's calls would, each with the line's questions.
+  characters), as an agent loop's calls would, each with the line's questions.
 - ``repeat``: the whole state arrives ``--steps`` times, each time with another question set (the line's
-  first question and two from ``POOL``), as rules that read one request at different points would ask it.
+  first question and two from ``POOL``), as a decision's rules and then its ``systemone`` algorithm ask one deployment about it.
 
 ``--attention-mode`` first writes a copy of a Decision 3.0 package (a directory) that declares that layout
 (``tools/state_once_parity.convert``). Every run clears the cache and sends each state's steps in order to

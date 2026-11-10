@@ -202,9 +202,9 @@ and `usage.input_tokens` counts the state once.
 
 ## Session cache
 
-Rules that read one request at different points ask about the same state more
-than once, and rules that read the conversation (`history`, `previous_turns` or
-`tool_results`) and agent loops send a state that grows call after call.
+A decision's rules and then its `systemone` algorithm can ask one deployment
+about the same user message, and rules that read `tool_results` send a state
+that grows call after call through an agent loop.
 `--session-cache-gib` keeps the backbone state of earlier states in device
 memory, as vLLM's prefix cache keeps KV blocks, and a later request reuses it:
 
@@ -230,8 +230,12 @@ global:
 - **What is reused.** A state read both ways (`prefix_bidir`) changes all its
   tokens when text is added to it, so it is reused only when it comes back
   whole, with other questions: the request then computes its questions only. A
+  `header-v1` package such as d3-ultra lists a text state's questions in front
+  of it, so it reuses a text state only with the same questions. A
   causal state is saved at the last multiple of 256 tokens at least 32 before
   its end, and a later state that starts with the same tokens resumes from there.
+  A state built from `history` or `previous_turns` ends with the current
+  request, so the next turn's state does not start with it and resumes nothing.
   States under 2,048 tokens are not saved, because the tree that saves or
   resumes one runs eager and costs more than it skips below that.
 - **Speed.** On one MI300X, d3-turbo answered three questions about a

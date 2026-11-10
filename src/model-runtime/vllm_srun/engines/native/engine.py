@@ -54,8 +54,8 @@ from .models.lora import attach, fold_scaling
 from .models.packed import Packed, packed_unavailable
 from .models.qwen3_5 import noncausal_masks, rope_index
 from .models.tree import Tree
-from .session import SessionCache
 from .reduced import REDUCED_AUTOCAST, linear_bytes, reduced_view, unavailable
+from .session import SessionCache
 from .weights import (
     cast_parameters,
     keep_linear_bf16,

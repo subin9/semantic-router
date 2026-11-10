@@ -18,6 +18,7 @@ from cli.main import main
 from cli.model_revision import builtin_releases
 from cli.models import UserConfig
 from cli.validator import validate_user_config
+from cli.validator_decision_model import engine_args_error
 from click.testing import CliRunner
 from huggingface_hub import HfApi
 
@@ -518,8 +519,6 @@ def test_resource_without_authored_placement_uses_available_gpus():
 
 
 def test_session_cache_gib_is_checked_as_the_router_checks_it():
-    from cli.validator_decision_model import engine_args_error
-
     assert engine_args_error({"session_cache_gib": 1.5}) is None
     assert engine_args_error({"session_cache_gib": -1}) == (
         "session_cache_gib must be a finite number, 0 or more"

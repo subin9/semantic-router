@@ -118,7 +118,7 @@ def test_a_lookup_resumes_the_furthest_matching_state_and_leaves_a_token_to_comp
         tokens[:16]
     )  # the whole prefix saved: resume the shorter one
     assert start == 8 and entry is not None and entry.layers is short
-    assert cache.match([0] + tokens[1:30]) == (None, 0)  # a different first token
+    assert cache.match([0, *tokens[1:30]]) == (None, 0)  # a different first token
     assert cache.match(tokens[:6]) == (None, 0)  # at most the minimum: no lookup
     receipt = cache.receipt()
     assert receipt["hits"] == 2 and receipt["misses"] == 2
@@ -133,10 +133,10 @@ def test_entries_are_evicted_least_recently_used_under_the_byte_budget():
     a, b, c = ([n] * 8 for n in (1, 2, 3))
     cache.insert(a, layer)
     cache.insert(b, layer)
-    assert cache.match(a + [0])[1] == 8  # a is now the most recent
+    assert cache.match([*a, 0])[1] == 8  # a is now the most recent
     cache.insert(c, layer)
-    assert cache.match(b + [0]) == (None, 0)
-    assert cache.match(a + [0])[1] == 8 and cache.match(c + [0])[1] == 8
+    assert cache.match([*b, 0]) == (None, 0)
+    assert cache.match([*a, 0])[1] == 8 and cache.match([*c, 0])[1] == 8
     assert cache.receipt()["evictions"] == 1 and cache.used == 2048
     cache.insert([4] * 8, [{"key": torch.zeros(1024, dtype=torch.float32)}])
     assert cache.match([4] * 9) == (None, 0)  # larger than the whole budget: not kept

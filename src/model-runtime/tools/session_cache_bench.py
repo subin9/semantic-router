@@ -207,11 +207,15 @@ def main() -> int:
                     if "tree" in names:
                         timed["tree"].append(call(runtime, "tree", state, questions)[0])
                     a, b = probabilities(off["answers"]), probabilities(on["answers"])
-                    gap = max(abs(x - y) for p, q in zip(a, b) for x, y in zip(p, q))
+                    gap = max(
+                        abs(x - y)
+                        for p, q in zip(a, b, strict=True)
+                        for x, y in zip(p, q, strict=True)
+                    )
                     changed = sum(
                         max(range(len(p)), key=p.__getitem__)
                         != max(range(len(q)), key=q.__getitem__)
-                        for p, q in zip(a, b)
+                        for p, q in zip(a, b, strict=True)
                     )
                     rows[key] = {
                         "id": entry["id"],

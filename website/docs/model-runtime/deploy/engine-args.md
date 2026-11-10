@@ -245,7 +245,7 @@ global:
   ([record](https://github.com/vllm-project/semantic-router/blob/main/src/model-runtime/docs/records/session-cache.md)).
 - **Answers.** Nothing is approximated, but a reused state rounds as any other
   packing of the same tokens does: no decision changed on the MI300X, and
-  probabilities moved by at most 0.015. That is why it is off by default.
+  probabilities moved by at most 0.014. That is why it is off by default.
 - **Memory.** The budget counts in full when the runtime places the model, and
   the least recently used states leave first. A saved d3-turbo state takes
   154 MB plus 64 KiB per token; a 5,800-token state, 534 MB.

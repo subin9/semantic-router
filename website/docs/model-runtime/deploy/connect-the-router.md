@@ -129,7 +129,7 @@ global:
 | `artifact` | A Hugging Face repository, or an absolute path to a local copy. |
 | `revision` | The exact 40-character commit to load. Built-in models are already pinned; other repositories need one. |
 | `device` | `auto` (default), `cpu`, `cuda:N`, `rocm:N`, `xpu:N`, `npu:N`, `mps`, or an accelerator a plugin adds. |
-| `max_num_seqs`, `max_num_batched_tokens`, `batch_window_ms`, `dtype`, `enable_shared_context`, `max_model_len` | Engine arguments: how the worker batches requests, the precision it computes in and a Decision model's input limit. Leave them out for the runtime's defaults. `max_model_len` applies to a managed worker without replicas. See [Engine arguments](./engine-args.md). |
+| `max_num_seqs`, `max_num_batched_tokens`, `batch_window_ms`, `dtype`, `enable_shared_context`, `max_model_len`, `session_cache_gib` | Engine arguments: how the worker batches requests, the precision it computes in, a Decision model's input limit and the device memory its session cache keeps earlier states in. Leave them out for the runtime's defaults. `max_model_len` applies to a managed worker without replicas; every replica keeps its own session cache. See [Engine arguments](./engine-args.md). |
 | `input` | For task models: the longest input in tokens (`max_tokens`) and what to do with longer input (`overflow`: `reject`, `truncate` or `window`). |
 | `replicas` | Explicit managed `device` or attached `endpoint`/`model` placements for this model. Omit for one worker. |
 | `outlier_detection` | When a replica's requests keep timing out, take it out of dispatch for a while. See [Eject a replica that keeps timing out](./placement-and-scaling.md#eject-a-replica-that-keeps-timing-out). |

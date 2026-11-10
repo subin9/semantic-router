@@ -450,6 +450,8 @@ func engineArgsMismatch(declaration config.ModelDeployment, args EngineArgs) str
 		return "dtype"
 	case declaration.EnableSharedContext != nil && *declaration.EnableSharedContext != args.EnableSharedContext:
 		return "enable_shared_context"
+	case declaration.SessionCacheGiB != nil && *declaration.SessionCacheGiB != args.SessionCacheGiB:
+		return "session_cache_gib"
 	}
 	return ""
 }

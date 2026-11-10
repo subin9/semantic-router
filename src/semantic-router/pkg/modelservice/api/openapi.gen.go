@@ -829,6 +829,11 @@ type EngineArgs struct {
 	// one the runtime chose for the device (its memory class; the CPU's default never binds at its token
 	// budget, since a row costs at least 8 padded tokens).
 	MaxNumSeqs int `json:"max_num_seqs"`
+
+	// SessionCacheGib Device memory, in GiB, for the backbone states of earlier decision requests' states, so a request
+	// whose state starts with the same tokens (a growing conversation or agent history) computes only the
+	// tokens after them; 0 is off. Answers differ from a fresh forward's by rounding only.
+	SessionCacheGib *float64 `json:"session_cache_gib,omitempty"`
 }
 
 // EngineArgsDtype The configured precision; auto is the precision the model was published in.

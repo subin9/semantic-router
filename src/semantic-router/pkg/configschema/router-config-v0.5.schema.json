@@ -3978,6 +3978,9 @@
         "max_model_len": {
           "type": "integer"
         },
+        "session_cache_gib": {
+          "type": "number"
+        },
         "endpoint": {
           "type": "string"
         },

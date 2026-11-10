@@ -85,6 +85,7 @@ def render(
         query=encoded["query"],
         keys=row.keys,
         descriptions=[candidate.description for candidate in row.candidates],
+        state_tokens=encoded["state_tokens"],
     )
 
 

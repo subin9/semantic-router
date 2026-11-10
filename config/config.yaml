@@ -2714,9 +2714,11 @@ global:
           base_ejection_ms: 30000
           max_ejection_ms: 300000
           max_ejection_percent: 50
-      # Engine arguments tune batching, precision, shared context and a
-      # Decision model's input limit; each one left out keeps the runtime's
-      # default (website/docs/model-runtime/deploy/engine-args.md).
+      # Engine arguments tune batching, precision, shared context, the session
+      # cache and a Decision model's input limit; each one left out keeps the
+      # runtime's default (website/docs/model-runtime/deploy/engine-args.md).
+      # session_cache_gib keeps earlier requests' states in device memory, so a
+      # state that grows call by call computes only what it added.
       decision-kai-tuned:
         provider: model_runtime
         artifact: vllm-sr/Decision-2.0-Kai-0.6B
@@ -2728,6 +2730,7 @@ global:
         dtype: auto
         enable_shared_context: true
         max_model_len: 4096
+        session_cache_gib: 1
       # An attached model runtime: endpoint connects to a runtime started
       # elsewhere (`vllm-srun serve <hf-model>`) instead of starting one, and
       # model selects its served model. An attached runtime takes the

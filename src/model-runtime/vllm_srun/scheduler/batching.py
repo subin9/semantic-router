@@ -272,7 +272,9 @@ class SharedContext:
     other request is batched as usual. This is the released runtime's
     shared-context switch with its recommended policy (tree mode, τ 0,
     automatic break-even), and the engine runs the same operations. Answers
-    can differ from those of batched rows by rounding.
+    can differ from those of batched rows by rounding. With a session cache
+    (``--session-cache-gib``), a request whose state is long enough to save is a
+    tree whatever its question count and break-even.
     """
 
     def __init__(self, policy: SharePolicy | None = None):
@@ -300,11 +302,17 @@ class SharedContext:
         decided = self.model.shared_context(items, token_budget) if self.model else None
         if decided is not None:
             return decided
-        if len(items) < self.policy.min_questions:
+        # A state long enough for the engine's session cache runs as a tree even alone: the tree saves its
+        # state and resumes an earlier one (``EngineModel.resumes``).
+        engine = getattr(self.model, "engine_model", None)
+        resumes = engine is not None and engine.resumes(
+            min(getattr(item, "state_tokens", 0) for item in items)
+        )
+        if len(items) < self.policy.min_questions and not resumes:
             return 0
         prefix = shared_prefix(cast("list[RenderedItem]", items), self.policy.align)
-        if prefix < MIN_SHARED_PREFIX or (len(items) - 1) * prefix < (
-            self.threshold or 0
+        if prefix < MIN_SHARED_PREFIX or (
+            not resumes and (len(items) - 1) * prefix < (self.threshold or 0)
         ):
             return 0
         packed = prefix + sum(len(item.ids) - prefix for item in items)

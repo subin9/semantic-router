@@ -21,13 +21,19 @@ from ..systemone import MAX_OPTIONS, MIN_OPTIONS, canonical
 SUFFIX = "\n\nSelect the single option best supported by the context and instructions.\nDecision:"
 
 
+def payload(value: Any) -> str:
+    return value if isinstance(value, str) else canonical(value)
+
+
+def question_text(kind: str, instructions: Any) -> str:
+    """The context segment's text after the state."""
+    return f"\n\nTask type: {kind}\nQuestion:\n{payload(instructions)}\nOptions:"
+
+
 def segments(
     state: Any, kind: str, instructions: Any, options: list[dict[str, Any]]
 ) -> tuple[str, list[str], str]:
-    def payload(value: Any) -> str:
-        return value if isinstance(value, str) else canonical(value)
-
-    prefix = f"Context:\n{payload(state)}\n\nTask type: {kind}\nQuestion:\n{payload(instructions)}\nOptions:"
+    prefix = f"Context:\n{payload(state)}{question_text(kind, instructions)}"
     rendered = [
         "\n<option>\n"
         + canonical({"key": option["key"], "description": option["description"]})
@@ -48,6 +54,11 @@ def encode(
 ) -> dict[str, Any]:
     prefix, rendered, suffix = segments(state, kind, instructions, options)
     ids = encode_text(prefix)
+    # The state is the context segment's tokens before those of the question text, which ends it (the session
+    # cache saves inside it; a merge across the boundary moves it by a token or two, which its margin absorbs).
+    state_tokens = max(
+        0, len(ids) - len(encode_text(question_text(kind, instructions)))
+    )
     endpoints = []
     for option in rendered:
         part = encode_text(option)
@@ -66,7 +77,12 @@ def encode(
             MAX_LENGTH_EXCEEDED,
             f"{question_id}: {len(ids)} tokens exceeds max_length={max_length}; no truncation",
         )
-    return {"ids": ids, "endpoints": endpoints, "query": len(ids) - 1}
+    return {
+        "ids": ids,
+        "endpoints": endpoints,
+        "query": len(ids) - 1,
+        "state_tokens": state_tokens,
+    }
 
 
 def collate(items: list[Any], pad_id: int, multiple: int = 8) -> dict[str, Any]:

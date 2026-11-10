@@ -263,6 +263,7 @@ def test_a_models_own_engine_arguments_reach_its_batcher_and_scheduler(qwen3_pac
             "dtype": "auto",
             "enable_shared_context": True,
             "max_model_len": None,
+            "session_cache_gib": 0.0,
         }
     finally:
         runtime.stop()

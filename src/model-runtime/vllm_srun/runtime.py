@@ -40,7 +40,7 @@ from .errors import (
     VerificationError,
     with_reason,
 )
-from .placement import Placement, check_device, device_kind, place
+from .placement import GIB, Placement, check_device, device_kind, place
 from .plugins import registry
 from .plugins.base import (
     DEADLINE,
@@ -414,6 +414,7 @@ class ServedModel:
             budget,
             _bf16_parameters(spec, config, dtype),
             dtype,
+            self.requested_args.session_cache_gib,
         )
         device = placement.device
         self.args, self.limits_source = calibration.resolve(self.requested_args, device)
@@ -467,6 +468,7 @@ class ServedModel:
             reduced_precision=self.dtype == "auto",
             threads=process.threads,
             cpu_neighbors=neighbors,
+            session_cache_bytes=int(self.args.session_cache_gib * GIB),
         )
         needed = f"needs about {placement.estimated_bytes / (1 << 30):.1f} GiB"
         free = device.free_memory
@@ -520,7 +522,8 @@ class ServedModel:
         self.health.set("ready", self.unpinned)
         log.info(
             "serving %s on %s (max_num_seqs %d, max_num_batched_tokens %d from %s, "
-            "batch_window_ms %g, dtype %s, shared context %s, %s numerics)",
+            "batch_window_ms %g, dtype %s, shared context %s, session cache %g GiB, "
+            "%s numerics)",
             self.label,
             placement.device.label,
             self.args.max_num_seqs,
@@ -529,6 +532,7 @@ class ServedModel:
             self.args.batch_window_ms,
             self.precision,
             "on" if self.shared else "off",
+            self.args.session_cache_gib,
             self.numerics,
         )
 
@@ -544,6 +548,16 @@ class ServedModel:
         self.shared = (
             model.shared_context_default if requested is None else requested
         ) and unavailable is None
+        if self.args.session_cache_gib and not self.shared:
+            # The cache saves and resumes inside shared-context trees only.
+            raise RuntimeError(
+                "session_cache_gib: needs the shared-context forward"
+                + (
+                    f" ({unavailable})"
+                    if unavailable
+                    else "; enable_shared_context is off"
+                )
+            )
         batcher = Batcher(self.args, sharing if self.shared else None)
         batcher.bind(model)
         self.numerics = (

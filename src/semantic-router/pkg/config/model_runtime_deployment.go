@@ -3,6 +3,7 @@ package config
 import (
 	"cmp"
 	"fmt"
+	"math"
 	"net/url"
 	"path/filepath"
 	"regexp"
@@ -289,7 +290,7 @@ func validateModelRuntimeEndpoint(endpoint string) error {
 
 // HasEngineArgs reports whether the deployment sets any engine argument.
 func (d ModelDeployment) HasEngineArgs() bool {
-	return d.MaxNumSeqs != nil || d.MaxNumBatchedTokens != nil || d.BatchWindowMS != nil || d.Dtype != "" || d.EnableSharedContext != nil || d.MaxModelLen != nil
+	return d.MaxNumSeqs != nil || d.MaxNumBatchedTokens != nil || d.BatchWindowMS != nil || d.Dtype != "" || d.EnableSharedContext != nil || d.MaxModelLen != nil || d.SessionCacheGiB != nil
 }
 
 func (d ModelDeployment) validateEngineArgs() error {
@@ -310,6 +311,12 @@ func (d ModelDeployment) validateEngineArgs() error {
 	}
 	if d.MaxModelLen != nil && (d.Endpoint != "" || len(d.Replicas) > 0) {
 		return fmt.Errorf("max_model_len applies only to a managed worker, not to an attached endpoint or replicas")
+	}
+	if d.SessionCacheGiB != nil && (math.IsNaN(*d.SessionCacheGiB) || math.IsInf(*d.SessionCacheGiB, 0) || *d.SessionCacheGiB < 0) {
+		return fmt.Errorf("session_cache_gib must be a finite number, 0 or more")
+	}
+	if d.SessionCacheGiB != nil && *d.SessionCacheGiB > 0 && d.EnableSharedContext != nil && !*d.EnableSharedContext {
+		return fmt.Errorf("session_cache_gib needs the shared-context forward; enable_shared_context is false")
 	}
 	return nil
 }

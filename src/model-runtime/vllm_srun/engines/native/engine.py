@@ -53,6 +53,7 @@ from .models.lora import attach, fold_scaling
 from .models.packed import Packed, packed_unavailable
 from .models.qwen3_5 import noncausal_masks, rope_index
 from .models.tree import Tree
+from .session import SessionCache
 from .reduced import REDUCED_AUTOCAST, linear_bytes, reduced_view, unavailable
 from .weights import (
     cast_parameters,
@@ -231,6 +232,28 @@ class NativeEngineModel(EngineModel):
                 name: EncoderGraphs(cast(models.EncoderBackbone, view), self.device)
                 for name, view in self.reduced.items()
             }
+        self.session: SessionCache | None = None
+        if options.session_cache_bytes:
+            reason = self.session_unavailable()
+            if reason:
+                raise RuntimeError(f"session cache: {reason}")
+            self.session = SessionCache(options.session_cache_bytes)
+
+    def session_unavailable(self) -> str | None:
+        """None when this model's shared-context trees can save and resume session states, else why not."""
+        if self.spec.encoder or not hasattr(self.backbone, "forward_tree"):
+            return "the backbone has no shared-context tree forward"
+        if self.noncausal or getattr(self.backbone, "layout", "causal") != "causal":
+            return "the backbone's state attends to later tokens, so its prefix state is not reusable"
+        if self.gated:
+            return "gated adapters change the backbone per request"
+        return None
+
+    def resumes(self, state_tokens: int) -> bool:
+        return (
+            self.session is not None
+            and self.session.mark(state_tokens, 0, state_tokens) > 0
+        )
 
     def stacks(self) -> dict[str | None, nn.Module]:
         """Every layer stack by branch name; ``None`` is the backbone's own."""
@@ -290,6 +313,8 @@ class NativeEngineModel(EngineModel):
                 if self.packed_reason is None
                 else {"skipped": self.packed_reason}
             )
+        if self.session is not None:
+            out["session_cache"] = self.session.receipt()
         if self.graphs is not None:
             out["graphs"] = self.graphs.receipt()
         if self.branch_graphs is not None:
@@ -346,16 +371,36 @@ class NativeEngineModel(EngineModel):
         )
 
     def _run_tree(
-        self, prefix: torch.Tensor, suffixes: list[torch.Tensor], padded_exact: bool
+        self,
+        prefix: torch.Tensor,
+        suffixes: list[torch.Tensor],
+        padded_exact: bool,
+        state_tokens: int = 0,
     ) -> torch.Tensor:
-        """The prefix once and every suffix from it, packed in one row; the suffix rows ``[n, width, H]``."""
+        """The prefix once and every suffix from it, packed in one row; the suffix rows ``[n, width, H]``.
+
+        With a session cache the prefix resumes from the furthest saved state its
+        tokens match, and the state at its mark inside the first ``state_tokens``
+        is saved (``session.py``)."""
         lengths = [len(suffix) for suffix in suffixes]
-        packed = torch.cat([prefix, *suffixes])[None].to(self.device)
+        start, resume, mark, tokens = 0, None, 0, None
+        if self.session is not None:
+            tokens = prefix.tolist()
+            entry, start = self.session.match(tokens)
+            resume = None if entry is None else entry.layers
+            mark = self.session.mark(state_tokens, start, len(tokens))
+        packed = torch.cat([prefix[start:], *suffixes])[None].to(self.device)
         tree = Tree(
-            len(prefix), lengths, padded(max(lengths)), self.device, padded_exact
-        )
+            len(prefix) - start, lengths, padded(max(lengths)), self.device, padded_exact,
+            start=start, resume=resume, mark=mark,
+        )  # fmt: skip
         hidden = cast(models.TreeBackbone, self.backbone).forward_tree(packed, tree)
-        return tree.rows(hidden[0, len(prefix) :])
+        if mark:
+            assert self.session is not None and tokens is not None
+            if len(tree.saved) != len(cast(Any, self.backbone).layers):
+                raise RuntimeError("a session tree saved a state for some layers only")
+            self.session.insert(tokens[:mark], tree.saved)
+        return tree.rows(hidden[0, tree.prefix :])
 
     def _forward_tree(self, batch: ForwardBatch) -> ForwardOutput:
         """The batch as one shared-context tree: its first ``shared_prefix`` tokens computed once."""
@@ -368,6 +413,7 @@ class NativeEngineModel(EngineModel):
                 ids[0, :prefix],
                 [ids[row, prefix:length] for row, length in enumerate(lengths)],
                 padded_exact=any(length != padded(max(lengths)) for length in lengths),
+                state_tokens=batch.state_tokens,
             )
             rows = torch.arange(rows_hidden.shape[0], device=rows_hidden.device)
             gathered = rows_hidden[rows[:, None], gather]

@@ -89,7 +89,7 @@ global:
 | `replicas` | Workers of one logical deployment: each a `device`, or an `endpoint` and `model` of a worker started elsewhere |
 | `outlier_detection` | When a replica's exchanges run out of their deadline `consecutive_timeouts` times in a row (default 3; 0 turns it off), it leaves dispatch for `base_ejection_ms` (30000), twice as long each time in a row up to `max_ejection_ms` (ten times the base); at most `max_ejection_percent` (50) of the replicas are out at once. See [Eject a replica that keeps timing out](../model-runtime/deploy/placement-and-scaling.md#eject-a-replica-that-keeps-timing-out) |
 | `public_name` | The deployment's name on the inference API |
-| `max_num_seqs`, `max_num_batched_tokens`, `batch_window_ms`, `dtype`, `enable_shared_context`, `max_model_len` | Engine arguments; see [engine arguments](../model-runtime/deploy/engine-args.md) |
+| `max_num_seqs`, `max_num_batched_tokens`, `batch_window_ms`, `dtype`, `enable_shared_context`, `max_model_len`, `session_cache_gib` | Engine arguments; see [engine arguments](../model-runtime/deploy/engine-args.md) |
 
 ### Connection block
 

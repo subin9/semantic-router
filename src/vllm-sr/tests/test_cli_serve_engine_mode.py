@@ -515,3 +515,19 @@ def test_resource_without_authored_placement_uses_available_gpus():
         {"device": "cuda:1"},
         {"device": "cuda:3"},
     ]
+
+
+def test_session_cache_gib_is_checked_as_the_router_checks_it():
+    from cli.validator_decision_model import engine_args_error
+
+    assert engine_args_error({"session_cache_gib": 1.5}) is None
+    assert engine_args_error({"session_cache_gib": -1}) == (
+        "session_cache_gib must be a finite number, 0 or more"
+    )
+    assert engine_args_error({"session_cache_gib": True}) is not None
+    assert engine_args_error(
+        {"session_cache_gib": 1, "enable_shared_context": False}
+    ) == (
+        "session_cache_gib needs the shared-context forward; "
+        "enable_shared_context is false"
+    )

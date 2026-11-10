@@ -88,6 +88,7 @@ def forward_logits(
     batch: dict[str, torch.Tensor],
     lengths: list[int],
     shared_prefix: int,
+    state_tokens: int = 0,
 ) -> torch.Tensor:
     """A collated decision batch through the backbone, then the candidate logits."""
     output = engine_model.forward(
@@ -98,6 +99,7 @@ def forward_logits(
             query=batch["query_positions"],
             lengths=lengths,
             shared_prefix=shared_prefix,
+            state_tokens=state_tokens,
         )
     )
     mask = batch["candidate_mask"].to(output.gathered.device)

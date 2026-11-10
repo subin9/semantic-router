@@ -635,6 +635,7 @@ export interface CanonicalModelDeployment {
   dtype?: 'auto' | 'float32' | 'bfloat16' | 'float16'
   enable_shared_context?: boolean
   max_model_len?: number
+  session_cache_gib?: number
   replicas?: ModelReplica[]
   public_name?: string
   endpoint?: string

@@ -1,7 +1,7 @@
 ---
 title: Engine arguments
 sidebar_position: 5
-description: Tune batching, precision, shared context and a Decision model's input limit with vLLM-style engine arguments.
+description: Tune batching, precision, shared context, the session cache and a Decision model's input limit with vLLM-style engine arguments.
 ---
 
 # Engine arguments
@@ -9,8 +9,8 @@ description: Tune batching, precision, shared context and a Decision model's inp
 The model runtime batches by default, like vLLM: rows of concurrent requests
 share forward passes, so a busy deployment answers more requests per second.
 Engine arguments tune that batching, the precision the model computes in,
-shared context and a Decision model's input limit. Every argument you leave out
-keeps the runtime's default.
+shared context, the session cache and a Decision model's input limit. Every
+argument you leave out keeps the runtime's default.
 
 ```yaml title="config.yaml"
 global:
@@ -32,6 +32,7 @@ global:
 | `--dtype` | `dtype` | `auto` | Precision the model computes in: `auto`, `float32`, `bfloat16` or `float16`. |
 | `--enable-shared-context`, `--no-enable-shared-context` | `enable_shared_context` | the model family's | Compute the shared state of a multi-question decision request once. |
 | `--max-model-len` | `max_model_len` | the package's limit | Most input tokens one question of a Decision model may have; lowers the package's limit ([below](#input-limit)). |
+| `--session-cache-gib` | `session_cache_gib` | `0` (off) | Device memory for the states of earlier requests, so a request whose state starts with an earlier one computes only the rest ([below](#session-cache)). |
 
 ## Batching
 
@@ -198,6 +199,50 @@ from it, whatever the setting; on, whole requests also share forwards. Branched
 answers equal those of each question run alone up to rounding
 ([record](https://github.com/vllm-project/semantic-router/blob/main/src/model-runtime/docs/records/state-once.md)),
 and `usage.input_tokens` counts the state once.
+
+## Session cache
+
+A Router rule that reads the conversation (`history`, `previous_turns` or
+`tool_results`) sends a state that grows call after call, and an agent loop
+does the same. `--session-cache-gib` keeps the backbone state of each such
+state in device memory, like vLLM's prefix cache does for KV blocks, and a
+later request whose state starts with the same tokens resumes from it and
+computes only what follows:
+
+```yaml title="config.yaml"
+global:
+  model_catalog:
+    deployments:
+      decision-eos:
+        provider: model_runtime
+        artifact: vllm-sr/Decision-2.0-Eos-0.8B
+        device: cuda:0
+        session_cache_gib: 2
+```
+
+- **What it saves.** For a decoder whose state never sees later tokens
+  (Decision 2.0, and the Decision 1.0 Qwen3.5 sizes with shared context on),
+  the state of every layer at a point inside the request's state: the keys and
+  values of the full-attention layers before it and the recurrent state of the
+  Gated DeltaNet layers there. The point is the last multiple of 256 tokens at
+  least 32 tokens before the state's end, so states shorter than about 1,056
+  tokens are not saved.
+- **Speed.** A growing state costs about what it adds per call, not its whole
+  length. On one RTX 4070 Ti SUPER, Decision 2.0 Eos-0.8B with three questions
+  per call answered a 5,800-token state in 76 ms instead of 178 ms
+  ([record](https://github.com/vllm-project/semantic-router/blob/main/src/model-runtime/docs/records/session-cache.md)).
+- **Answers.** Nothing is approximated, but a resumed request rounds as any
+  other packing of the same tokens does, as shared context does: no decision
+  changed in that record, and probabilities moved by at most 0.009. That is why
+  it is off by default.
+- **Memory.** The budget counts in full when the runtime places the model, and
+  the least recently used states leave first. A saved state of Eos-0.8B takes
+  19.5 MB plus 12 KiB per token before its point; larger models take more.
+- **Where it applies.** It needs the shared-context forward, so the runtime
+  refuses it with `enable_shared_context: false`, and on models whose state
+  attends to later tokens (Decision 3.0, encoders). Each replica keeps its own
+  cache, so a conversation resumes only on the replica that answered its last
+  call.
 
 ## Input limit
 

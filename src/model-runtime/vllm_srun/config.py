@@ -60,7 +60,11 @@ class EngineArgs:
     model's family. ``max_model_len`` is the most input tokens one question of
     a Decision model may have: it lowers the package's limit, never raises it,
     and a longer question fails with ``max_length_exceeded`` before any
-    forward; None keeps the package's limit.
+    forward; None keeps the package's limit. ``session_cache_gib`` > 0 keeps
+    the backbone states of earlier requests' shared states in that much device
+    memory, so a later request whose state starts with the same tokens (a
+    conversation or agent history growing call by call) computes only what
+    follows them; it needs the shared-context forward, and 0 turns it off.
     """
 
     max_num_seqs: int | None = None
@@ -69,6 +73,7 @@ class EngineArgs:
     dtype: str = "auto"
     enable_shared_context: bool | None = None
     max_model_len: int | None = None
+    session_cache_gib: float = 0.0
 
     def __post_init__(self) -> None:
         if self.max_num_seqs is not None:
@@ -108,6 +113,12 @@ class EngineArgs:
                 raise ValueError("max_model_len must be an integer")
             if self.max_model_len < 1:
                 raise ValueError("max_model_len must be at least 1")
+        if isinstance(self.session_cache_gib, bool) or not isinstance(
+            self.session_cache_gib, (int, float)
+        ):
+            raise ValueError("session_cache_gib must be a number")
+        if not 0 <= self.session_cache_gib < float("inf"):
+            raise ValueError("session_cache_gib must be a finite number, 0 or more")
 
     def describe(self, shared_context: bool) -> dict[str, Any]:
         """The arguments as ``/v1/models`` reports them, with shared context resolved."""
@@ -118,6 +129,7 @@ class EngineArgs:
             "dtype": self.dtype,
             "enable_shared_context": shared_context,
             "max_model_len": self.max_model_len,
+            "session_cache_gib": float(self.session_cache_gib),
         }
 
 
@@ -156,6 +168,7 @@ class ModelConfig:
     dtype: str | None = None
     enable_shared_context: bool | None = None
     max_model_len: int | None = None
+    session_cache_gib: float | None = None
 
     def engine_args(self, defaults: EngineArgs) -> EngineArgs:
         """This model's engine arguments: its own where it sets them, else ``defaults``."""

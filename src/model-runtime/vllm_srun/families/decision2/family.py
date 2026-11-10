@@ -312,6 +312,7 @@ class Decision2Model(DecisionModel[RenderedItem, list[float] | None]):
                     query=encoded["query"],
                     keys=[option["key"] for option in options],
                     descriptions=[option["description"] for option in options],
+                    state_tokens=encoded["state_tokens"],
                 )
             )
         return RequestPlan(
@@ -341,6 +342,7 @@ class Decision2Model(DecisionModel[RenderedItem, list[float] | None]):
             batch,
             [len(item.ids) for item in items],
             shared_prefix,
+            min(item.state_tokens for item in items) if shared_prefix else 0,
         )
         if scores.shape[0] != len(items):
             raise RuntimeError("model returned the wrong number of question answers")

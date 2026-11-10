@@ -186,6 +186,17 @@ def add_serve_arguments(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--session-cache-gib",
+        type=float,
+        default=ENGINE_DEFAULTS.session_cache_gib,
+        help=(
+            "device memory for the backbone states of earlier decision requests' "
+            "states, so a request whose state starts with an earlier one (a growing "
+            "conversation or agent history) computes only the rest; needs the "
+            "shared-context forward, 0 turns it off (default: %(default)s)"
+        ),
+    )
+    parser.add_argument(
         "--media-workers",
         type=int,
         default=SERVE_DEFAULTS.media_workers,
@@ -287,6 +298,7 @@ def _engine_args(args: argparse.Namespace) -> EngineArgs:
             dtype=args.dtype,
             enable_shared_context=args.enable_shared_context,
             max_model_len=args.max_model_len,
+            session_cache_gib=args.session_cache_gib,
         )
     except ValueError as exc:
         raise SystemExit(f"--{str(exc).replace('_', '-')}") from exc

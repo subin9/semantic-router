@@ -17079,6 +17079,9 @@
                               },
                               "max_num_seqs": {
                                 "type": "integer"
+                              },
+                              "session_cache_gib": {
+                                "type": "number"
                               }
                             },
                             "required": [
@@ -17086,7 +17089,8 @@
                               "max_num_batched_tokens",
                               "batch_window_ms",
                               "dtype",
-                              "enable_shared_context"
+                              "enable_shared_context",
+                              "session_cache_gib"
                             ]
                           },
                           "family": {

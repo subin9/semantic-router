@@ -51,6 +51,7 @@ type modelEntry struct {
 	Dtype               string   `json:"dtype,omitempty"`
 	EnableSharedContext *bool    `json:"enable_shared_context,omitempty"`
 	MaxModelLen         *int     `json:"max_model_len,omitempty"`
+	SessionCacheGiB     *float64 `json:"session_cache_gib,omitempty"`
 }
 
 // planProcesses assigns every logical deployment worker its own process. The
@@ -91,6 +92,7 @@ func planProcesses(deployments map[string]config.ModelDeployment, command []stri
 					Model: deployment.Artifact, Revision: deployment.Revision, Name: name, Device: device,
 					MaxNumSeqs: deployment.MaxNumSeqs, MaxNumBatchedTokens: deployment.MaxNumBatchedTokens, BatchWindowMS: deployment.BatchWindowMS,
 					Dtype: deployment.Dtype, EnableSharedContext: deployment.EnableSharedContext, MaxModelLen: deployment.MaxModelLen,
+					SessionCacheGiB: deployment.SessionCacheGiB,
 				}}
 				if device == "cpu" {
 					plan.threads = cpuThreads(cores)

@@ -1764,6 +1764,14 @@ components:
           description: |
             The most input tokens one question of a Decision model may have, as configured; null keeps the
             package's limit. The limit the model applies is the card's `limits.max_input_tokens`.
+        session_cache_gib:
+          type: number
+          format: double
+          minimum: 0
+          description: |
+            Device memory, in GiB, for the backbone states of earlier decision requests' states, so a request
+            whose state starts with the same tokens (a growing conversation or agent history) computes only the
+            tokens after them; 0 is off. Answers differ from a fresh forward's by rounding only.
     GoldenStatus:
       type: object
       required: [status]

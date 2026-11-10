@@ -101,6 +101,7 @@ def test_the_card_reports_the_configured_engine_arguments(qwen3_package):
             "dtype": "auto",
             "enable_shared_context": False,
             "max_model_len": None,
+            "session_cache_gib": 0.0,
         }
         body = {
             "state": STATE,
@@ -536,6 +537,7 @@ def test_models_health_metrics_and_openapi(client):
         "dtype": "auto",
         "enable_shared_context": True,
         "max_model_len": None,
+        "session_cache_gib": 0.0,
     }
     assert card["numerics"] == "approximate" and "profile" not in card
     assert card["limits"]["max_options"] == 255 and card["limits"]["max_levels"] == 10

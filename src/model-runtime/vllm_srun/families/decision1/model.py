@@ -262,6 +262,7 @@ class QwenDecisionModel(Decision1Model):
             batch,
             [len(item.ids) for item in items],
             shared_prefix,
+            min(item.state_tokens for item in items) if shared_prefix else 0,
         )
         with torch.inference_mode():
             return qwen.probabilities(scores, items, self.temperatures)

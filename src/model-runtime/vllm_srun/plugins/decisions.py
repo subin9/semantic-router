@@ -78,7 +78,7 @@ class ResolvedDecision:
 
 @dataclass(frozen=True)
 class RenderedItem:
-    """One question rendered to model inputs."""
+    """One question rendered to model inputs; ``state_tokens`` of its ``ids`` are the request's state (0: unknown)."""
 
     question_id: str
     task_type: str
@@ -87,6 +87,7 @@ class RenderedItem:
     query: int
     keys: list[str]
     descriptions: list[Any]
+    state_tokens: int = 0
 
 
 @dataclass

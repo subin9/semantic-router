@@ -360,7 +360,9 @@ class EngineOptions:
     the copy the policy consents to on its device. ``cpu_neighbors`` names
     the engines of the process's other CPU models (``auto`` where only loading
     can tell): threads an engine leaves spinning after a run slow another
-    engine's next forward on those cores.
+    engine's next forward on those cores. ``session_cache_bytes`` > 0 keeps
+    the backbone states of earlier requests' shared prefixes, up to that many
+    bytes, for later requests that start with the same tokens.
     """
 
     graphs: bool = True
@@ -370,6 +372,7 @@ class EngineOptions:
     reduced_precision: bool = False
     threads: int | None = None
     cpu_neighbors: frozenset[str] = frozenset()
+    session_cache_bytes: int = 0
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -427,7 +430,10 @@ class ForwardBatch:
     forward, on the rows it names (``AdapterGate``; never packed, shared or
     with images). ``noncausal`` runs the padded text rows under the noncausal
     full-attention mask whatever the backbone's own layout (a state-once
-    backbone with the whole prompt as one block).
+    backbone with the whole prompt as one block). ``state_tokens`` is how many of
+    the shared prefix's tokens are the request's state, which an engine with a
+    session cache saves its backbone state inside (``EngineModel.resumes``);
+    0 saves nothing.
     """
 
     input_ids: torch.Tensor
@@ -441,6 +447,7 @@ class ForwardBatch:
     states: list[int] | None = None
     adapter: AdapterGate | None = None
     noncausal: bool = False
+    state_tokens: int = 0
 
 
 @dataclass
@@ -569,6 +576,12 @@ class EngineModel(ABC):
     @property
     def approximate_kernels(self) -> bool:
         """Whether a kernel this model runs is not bit-exact against its reference (``KernelSet``)."""
+        return False
+
+    def resumes(self, state_tokens: int) -> bool:
+        """Whether a shared-context forward of a request with a state this long saves or resumes a session
+        state (an engine with a session cache); the batcher then runs even a single question as a tree.
+        """
         return False
 
     def forward(self, batch: ForwardBatch) -> ForwardOutput:

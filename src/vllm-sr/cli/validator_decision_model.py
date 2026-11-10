@@ -4,6 +4,7 @@ The Router validates the deployments that answer systemone questions and
 selectors, and how each question resolves to one.
 """
 
+import math
 import re
 
 from cli.config_contract import iter_condition_leaves, iter_routing_profiles
@@ -68,6 +69,19 @@ def engine_args_error(deployment: dict) -> str | None:
             return (
                 "max_model_len applies only to a managed worker, "
                 "not to an attached endpoint or replicas"
+            )
+    sessions = deployment.get("session_cache_gib")
+    if sessions is not None:
+        if (
+            isinstance(sessions, bool)
+            or not isinstance(sessions, (int, float))
+            or not 0 <= sessions < math.inf
+        ):
+            return "session_cache_gib must be a finite number, 0 or more"
+        if sessions > 0 and shared is False:
+            return (
+                "session_cache_gib needs the shared-context forward; "
+                "enable_shared_context is false"
             )
     return None
 

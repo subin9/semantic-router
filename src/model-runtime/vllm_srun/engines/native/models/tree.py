@@ -35,6 +35,13 @@ class Tree:
     [questions, width] layout. Padding sits after each suffix and repeats its last
     token: causal attention, convolution and recurrence never carry it into a real
     token, and the readout never reads it.
+
+    Session cache (``session.py``): ``resume`` holds the backbone state after the
+    first ``start`` prefix tokens, one item per layer, and the row holds only the
+    prefix tokens after them (``prefix`` counts those). ``mark`` > ``start`` asks
+    every layer to keep its state after the first ``mark`` prefix tokens in
+    ``saved``. Every layer takes its item with ``layer()`` once per forward, in
+    layer order.
     """
 
     is_tree = True
@@ -46,27 +53,44 @@ class Tree:
         width: int,
         device: torch.device,
         padded_exact: bool,
+        start: int = 0,
+        resume: list[dict[str, torch.Tensor]] | None = None,
+        mark: int = 0,
     ):
+        if (start > 0) != (resume is not None):
+            raise ValueError(
+                "a tree resumes from a saved state exactly when it starts past 0"
+            )
+        if mark and not start < mark <= start + prefix:
+            raise ValueError("a tree saves its state inside the prefix it computes")
         self.prefix = prefix
+        self.start = start
+        self.resume = resume
+        self.mark = mark
+        self.saved: list[dict[str, torch.Tensor]] = []
+        self._layer = 0
         self.lengths = lengths
         starts = [0]
         for length in lengths[:-1]:
             starts.append(starts[-1] + length)
         index = torch.empty((len(lengths), width), dtype=torch.long)
         valid = torch.zeros((len(lengths), width), dtype=torch.bool)
-        for row, (start, length) in enumerate(zip(starts, lengths, strict=False)):
-            index[row, :length] = torch.arange(start, start + length)
-            index[row, length:] = start + length - 1
+        for row, (offset, length) in enumerate(zip(starts, lengths, strict=False)):
+            index[row, :length] = torch.arange(offset, offset + length)
+            index[row, length:] = offset + length - 1
             valid[row, :length] = True
         self.index = index.to(device)
         # Index (not mask) gathers: a boolean mask would sync the host on every use.
         self.flat = valid.reshape(-1).nonzero().squeeze(1).to(device)
-        ends = [start + length for start, length in zip(starts, lengths, strict=False)]
+        ends = [
+            offset + length for offset, length in zip(starts, lengths, strict=False)
+        ]
         self.cu_seqlens_cpu = torch.tensor([0, *ends], dtype=torch.long)
         self.cu_seqlens = self.cu_seqlens_cpu.to(device)
+        end = start + prefix
         self.positions = torch.cat(
-            [torch.arange(prefix)]
-            + [torch.arange(prefix, prefix + length) for length in lengths]
+            [torch.arange(start, end)]
+            + [torch.arange(end, end + length) for length in lengths]
         )[None].to(device)
         # The exact batch of a request whose rows differ in padded length runs SDPA with an explicit mask; the
         # prefix keeps that mask regime.
@@ -76,6 +100,26 @@ class Tree:
             ]
             if padded_exact
             else None
+        )
+
+    def layer(self) -> dict[str, torch.Tensor] | None:
+        """The next layer's resumed state (None when the tree starts at 0); call once per layer, in order."""
+        index = self._layer
+        self._layer += 1
+        return None if self.resume is None else self.resume[index]
+
+    @property
+    def session(self) -> bool:
+        """Whether the tree resumes or saves a session state, so its layers take the session path."""
+        return self.resume is not None or self.mark > 0
+
+    def keep(self, state: dict[str, torch.Tensor]) -> None:
+        """Save the current layer's state at the mark (dense copies, so the forward's tensors can be freed)."""
+        self.saved.append(
+            {
+                k: v.clone(memory_format=torch.contiguous_format)
+                for k, v in state.items()
+            }
         )
 
     def rows(self, packed: torch.Tensor) -> torch.Tensor:
@@ -131,31 +175,45 @@ def tree_attention(
     groups: int,
     scaling: float,
 ) -> torch.Tensor:
-    """Attention over a packed tree ([1, H, L, D] inputs); returns [1, L, H, D] like ``common.attention``."""
+    """Attention over a packed tree ([1, H, L, D] inputs); returns [1, L, H, D] like ``common.attention``.
+
+    A resumed tree's saved keys and values come first (``c`` of them): the
+    prefix queries see them all and their own keys causally, the suffix queries
+    every prefix key."""
+    saved = tree.layer()
+    dtype = query.dtype
+    if query.is_cuda and torch.is_autocast_enabled("cuda"):
+        dtype = torch.get_autocast_dtype("cuda")
+    p = tree.prefix
+    if tree.session:
+        key, value = _session_keys(key.to(dtype), value.to(dtype), tree, saved)
+    c = key.shape[2] - query.shape[2]
     if groups > 1:
         b, h, n, d = key.shape
         key = key[:, :, None].expand(b, h, groups, n, d).reshape(b, h * groups, n, d)
         value = (
             value[:, :, None].expand(b, h, groups, n, d).reshape(b, h * groups, n, d)
         )
-    dtype = query.dtype
-    if query.is_cuda and torch.is_autocast_enabled("cuda"):
-        dtype = torch.get_autocast_dtype("cuda")
     q, k, v = query.to(dtype), key.to(dtype), value.to(dtype)
-    p = tree.prefix
-    head = F.scaled_dot_product_attention(
-        q[:, :, :p], k[:, :, :p], v[:, :, :p], attn_mask=tree.prefix_mask, is_causal=tree.prefix_mask is None,
-        scale=scaling,
-    )  # fmt: skip
+    if c:
+        head = _merge(
+            _attend(q[:, :, :p], k[:, :, c : c + p], v[:, :, c : c + p], True, scaling),
+            _attend(q[:, :, :p], k[:, :, :c], v[:, :, :c], False, scaling),
+        ).to(dtype)
+    else:
+        head = F.scaled_dot_product_attention(
+            q[:, :, :p], k[:, :, :p], v[:, :, :p], attn_mask=tree.prefix_mask, is_causal=tree.prefix_mask is None,
+            scale=scaling,
+        )  # fmt: skip
     out_prefix, lse_prefix = _attend(
-        q[:, :, p:], k[:, :, :p], v[:, :, :p], False, scaling
+        q[:, :, p:], k[:, :, : c + p], v[:, :, : c + p], False, scaling
     )
 
     def rows(x: torch.Tensor) -> torch.Tensor:
         return tree.rows(x[0].transpose(0, 1)).permute(0, 2, 1, 3)
 
     out_own, lse_own = _attend(
-        rows(q[:, :, p:]), rows(k[:, :, p:]), rows(v[:, :, p:]), True, scaling
+        rows(q[:, :, p:]), rows(k[:, :, c + p :]), rows(v[:, :, c + p :]), True, scaling
     )
     out_own = tree.packed(out_own.transpose(1, 2))
     lse_own = tree.packed(lse_own.transpose(1, 2))
@@ -164,6 +222,76 @@ def tree_attention(
     tail = torch.lerp(out_own.float(), out_prefix[0].transpose(0, 1).float(), weight)
     out = torch.cat([head[0].transpose(0, 1), tail.to(dtype)], dim=0)
     return out[None]
+
+
+def _merge(
+    own: tuple[torch.Tensor, torch.Tensor], other: tuple[torch.Tensor, torch.Tensor]
+) -> torch.Tensor:
+    """One softmax over two key sets from their outputs and log-sum-exps ([B, H, L, D], [B, H, L])."""
+    weight = torch.sigmoid(other[1] - own[1])[..., None]
+    return torch.lerp(own[0].float(), other[0].float(), weight)
+
+
+def _session_keys(
+    key: torch.Tensor,
+    value: torch.Tensor,
+    tree: Tree,
+    saved: dict[str, torch.Tensor] | None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """A layer's keys and values ([1, kv, L, D]) after the resumed ones, and its state at the mark kept."""
+    if saved is not None:
+        key = torch.cat([saved["key"].to(key.dtype), key], dim=2)
+        value = torch.cat([saved["value"].to(value.dtype), value], dim=2)
+    if tree.mark:
+        tree.keep({"key": key[:, :, : tree.mark], "value": value[:, :, : tree.mark]})
+    return key, value
+
+
+def session_rows(
+    x: torch.Tensor, saved: dict[str, torch.Tensor] | None, p: int, window: int
+) -> torch.Tensor:
+    """A session tree's prefix rows of ``x`` ([1, L, C]) after the ``window - 1`` convolution inputs before the
+    row: the saved ones, or zeros at position 0 (what the convolution pads with)."""
+    if saved is None:
+        lead = x.new_zeros(1, window - 1, x.shape[-1])
+    else:
+        lead = saved["conv"].to(x.dtype)
+    return torch.cat([lead, x[:, :p]], dim=1)
+
+
+def prefix_rule(
+    rule: Callable[..., tuple[torch.Tensor, torch.Tensor | None]],
+    tree: Tree,
+    inputs: tuple[torch.Tensor, ...],
+    saved: dict[str, torch.Tensor] | None,
+    conv_rows: torch.Tensor,
+    window: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """The gated delta rule over a session tree's prefix (q, k, v, g, beta of its row tokens) from the resumed
+    state, cut at the mark, whose state and convolution inputs it keeps (``conv_rows`` holds the ``window - 1``
+    inputs before the row, then the row's). Returns the prefix outputs and the prefix-end state.
+    """
+    p = tree.prefix
+    own = tree.mark - tree.start if tree.mark else p
+    initial = None if saved is None else saved["S"]
+
+    def run(
+        lo: int, hi: int, state: torch.Tensor | None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        q, k, v, g, beta = (x[:, lo:hi] for x in inputs)
+        out, final = rule(
+            q, k, v, g=g, beta=beta, initial_state=state, output_final_state=True, use_qk_l2norm_in_kernel=True,
+        )  # fmt: skip
+        assert final is not None
+        return out, final
+
+    out, state = run(0, own, initial)
+    if tree.mark:
+        tree.keep({"S": state, "conv": conv_rows[:, own : own + window - 1]})
+    if own < p:
+        rest, state = run(own, p, state)
+        out = torch.cat([out, rest], dim=1)
+    return out, state
 
 
 def varlen(rule: Any) -> bool:
@@ -198,7 +326,12 @@ def suffix_rule(
 def tree_gated_delta(
     m: GatedDeltaNet, hidden_states: torch.Tensor, tree: Tree, kernels: KernelSet
 ) -> torch.Tensor:
-    """``GatedDeltaNet.forward`` over a packed tree (no padding in the row), eager ops."""
+    """``GatedDeltaNet.forward`` over a packed tree (no padding in the row), eager ops.
+
+    A session tree's prefix convolution starts from the saved inputs before the
+    row (zeros at position 0) and its recurrence from the saved state
+    (``prefix_rule``)."""
+    saved = tree.layer()
     _, length, _ = hidden_states.shape
     p, n = tree.prefix, len(tree.lengths)
     mixed = m.in_proj_qkv(hidden_states)
@@ -207,11 +340,16 @@ def tree_gated_delta(
     a = m.in_proj_a(hidden_states)
     conv = kernels("causal_conv1d")
     weight, bias, window = m.conv1d.weight.squeeze(1), m.conv1d.bias, m.conv_kernel_size
-    head = conv(mixed[:, :p].transpose(1, 2), weight, bias, activation=m.activation)
-    rows = torch.cat(
-        [mixed[:, p - (window - 1) : p].expand(n, -1, -1), tree.rows(mixed[0, p:])],
-        dim=1,
-    )
+    prefix_rows = None
+    if tree.session:
+        prefix_rows = session_rows(mixed, saved, p, window)
+        head = conv(prefix_rows.transpose(1, 2), weight, bias, activation=m.activation)
+        head = head[:, :, window - 1 :]
+        lead = prefix_rows[:, -(window - 1) :]
+    else:
+        head = conv(mixed[:, :p].transpose(1, 2), weight, bias, activation=m.activation)
+        lead = mixed[:, p - (window - 1) : p]
+    rows = torch.cat([lead.expand(n, -1, -1), tree.rows(mixed[0, p:])], dim=1)
     tail = conv(rows.transpose(1, 2), weight, bias, activation=m.activation)[
         :, :, window - 1 :
     ]
@@ -228,10 +366,15 @@ def tree_gated_delta(
         query = query.repeat_interleave(m.num_v_heads // m.num_k_heads, dim=2)
         key = key.repeat_interleave(m.num_v_heads // m.num_k_heads, dim=2)
     rule = kernels("chunk_gated_delta_rule")
-    out_prefix, state = rule(
-        query[:, :p], key[:, :p], value[:, :p], g=g[:, :p], beta=beta[:, :p], initial_state=None,
-        output_final_state=True, use_qk_l2norm_in_kernel=True,
-    )  # fmt: skip
+    if prefix_rows is not None:
+        out_prefix, state = prefix_rule(
+            rule, tree, (query, key, value, g, beta), saved, prefix_rows, window
+        )
+    else:
+        out_prefix, state = rule(
+            query[:, :p], key[:, :p], value[:, :p], g=g[:, :p], beta=beta[:, :p], initial_state=None,
+            output_final_state=True, use_qk_l2norm_in_kernel=True,
+        )  # fmt: skip
     start = state.expand(n, *state.shape[1:]).contiguous()
     out_suffix = suffix_rule(
         rule, tree, query[:, p:], key[:, p:], value[:, p:], g[:, p:], beta[:, p:], start

@@ -86,6 +86,18 @@ func TestModelBindingsRejectInvalidPreparation(t *testing.T) {
 			d.MaxModelLen, d.Device, d.Replicas = intPtr(32000), "", []ModelReplica{{Device: "cpu"}, {Device: "cpu"}}
 			cfg.ModelDeployments["shared-encoder"] = d
 		}, "max_model_len applies only to a managed worker"},
+		{"negative session cache", func(cfg *RouterConfig) {
+			d := cfg.ModelDeployments["shared-encoder"]
+			size := -1.0
+			d.SessionCacheGiB = &size
+			cfg.ModelDeployments["shared-encoder"] = d
+		}, "session_cache_gib must be a finite number, 0 or more"},
+		{"session cache without shared context", func(cfg *RouterConfig) {
+			d := cfg.ModelDeployments["shared-encoder"]
+			size, shared := 1.0, false
+			d.SessionCacheGiB, d.EnableSharedContext = &size, &shared
+			cfg.ModelDeployments["shared-encoder"] = d
+		}, "session_cache_gib needs the shared-context forward"},
 		{"unknown dtype", func(cfg *RouterConfig) {
 			d := cfg.ModelDeployments["shared-encoder"]
 			d.Dtype = "half"
@@ -131,6 +143,12 @@ func TestEngineArgumentsCompileOnModelRuntimeDeployments(t *testing.T) {
 	cfg.ModelDeployments["shared-encoder"] = d
 	if err := ValidateModelBindings(cfg); err != nil {
 		t.Fatalf("engine arguments within their ranges compile: %v", err)
+	}
+	sessions := 0.5
+	d.EnableSharedContext, d.SessionCacheGiB = nil, &sessions
+	cfg.ModelDeployments["shared-encoder"] = d
+	if err := ValidateModelBindings(cfg); err != nil {
+		t.Fatalf("a session cache with the family's shared context compiles: %v", err)
 	}
 	if !d.HasEngineArgs() || cfg.ModelDeployments["shared-encoder"].WithDefaults().Dtype != "bfloat16" {
 		t.Fatalf("defaults must keep the declared engine arguments: %+v", d)

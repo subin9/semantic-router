@@ -368,6 +368,7 @@ A served model batches and computes as its engine arguments say (`EngineArgs`,
 | `batch_window_ms` | 2.0 | How long the scheduler collects requests after the first, before it plans the queue |
 | `dtype` | `auto` | The precision the backbone computes in; `auto` is the one the model was published in, except Decision 3.0's FP32 on CPUs |
 | `enable_shared_context` | the family's | Shared-context trees for multi-question decision requests; on by default only where the family's records show no accuracy loss (Decision 2.0, and state-once Decision 3.0 packages, whose requests always branch from their state: there it only decides whether whole requests share forwards) |
+| `session_cache_gib` | 0 (off) | Device memory for the backbone states of earlier requests' states, which a later request whose state starts with the same tokens resumes from (below) |
 
 Limits left unset take the device's memory class (`scheduler/calibration.py`:
 32,768 tokens and 256 rows at 160 GB and more, 16,384 / 128 from 64 GB,
@@ -422,6 +423,34 @@ agreement, max |Δp| or embedding cosine against the reference path) and the
 latency of its reduced path. `vllm-sr config migrate` drops the legacy
 `precision: fp16` (the model runs in its published precision) and maps a
 former `profile` onto these arguments.
+
+**Session cache.** With `session_cache_gib` above 0, a causal decoder's
+shared-context tree saves its backbone state inside the request's state and
+resumes the furthest saved state a later request's shared prefix starts with
+(`engines/native/session.py`), so a conversation or agent history that grows
+call by call computes only what follows the last call's state. The family
+reports how many leading tokens of a row are the state (`RenderedItem.state_tokens`,
+the context segment's tokens before the question text's own for the
+segmented prompt), and the engine saves at the last multiple of 256 tokens at
+least 32 before its end, from 1,024 tokens on: the next call, whose last
+state tokens may merge with the text that now follows them, and a repeat of
+the same state with other questions both still match. A saved state is, per
+layer, the full-attention keys and values before the mark (after norm and
+rotary, in the compute dtype) and the Gated DeltaNet recurrent state there
+(float32) with the convolution's last `window - 1` inputs; the tree runs the
+rest of its prefix from it (`Tree.start`, `resume`) and keeps the state at
+its own mark (`mark`, `saved`). A lookup hashes the prefix in blocks of the
+stride and confirms a hit token by token; entries are evicted least recently
+used under the byte budget, which placement counts in full. Nothing is
+approximated, but a resumed tree rounds as any other packing of the same rows
+does, and saving restarts the recurrence's chunks at the mark, so answers can
+move by rounding: the argument is off by default ([record](records/session-cache.md)).
+With the cache, a request whose state is long enough to save is a tree even
+with a single question (`EngineModel.resumes`), and the argument needs the
+shared-context forward: the runtime refuses it where shared context is off or
+the backbone's state attends to later tokens (noncausal and state-once
+layouts, gated adapters, encoders). Each replica keeps its own cache, so a
+conversation resumes only on the replica that answered its last call.
 
 ### 5.5 Third-party plugins
 

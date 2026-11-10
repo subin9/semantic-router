@@ -119,8 +119,12 @@ def place(
     memory_budget_gib: float | None = None,
     bf16_parameters: int = 0,
     dtype: str = "auto",
+    session_cache_gib: float = 0.0,
 ) -> Placement:
-    """A device for ``spec`` at ``dtype`` (``--dtype``), which decides the dtypes its weights are held in."""
+    """A device for ``spec`` at ``dtype`` (``--dtype``), which decides the dtypes its weights are held in.
+
+    A session cache (``--session-cache-gib``) counts in full: it fills up to its budget on the device.
+    """
     kind, index = parse_device(device)
     budget = int(memory_budget_gib * GIB) if memory_budget_gib else None
     candidates = auto_order() if kind == "auto" else [kind]
@@ -149,7 +153,7 @@ def place(
             running = dtypes.apply(spec, dtype, gpu)
             needed = estimate_bytes(
                 running, parameters, name, bf16_parameters if gpu else 0
-            )
+            ) + int(session_cache_gib * GIB)
             if budget is not None and needed > budget:
                 reasons.append(
                     f"{name}: {spec.name} needs about {needed / GIB:.1f} GiB, "

@@ -58,7 +58,7 @@ from .models.forest import Forest, forest_attention, forest_gated_delta
 from .models.lora import LoRALinear
 from .models.packed import Packed, is_packed, packed_rule
 from .models.qwen3_5 import noncausal_masks
-from .models.tree import Tree, is_tree, suffix_rule
+from .models.tree import Tree, is_tree, prefix_rule, session_rows, suffix_rule
 from .quantized import project
 
 if TYPE_CHECKING:
@@ -396,40 +396,66 @@ def _tree_gated_delta(
 ) -> torch.Tensor:
     """``tree.tree_gated_delta`` with the fused kernels: the prefix from a zero state, every suffix from the
     prefix-end state with its convolution window starting in the prefix (rows ``[prefix tail | suffix]``,
-    whose first outputs are dropped)."""
+    whose first outputs are dropped). A session tree's prefix runs the same way after the saved inputs before
+    its row, from the saved state (``tree.prefix_rule``)."""
+    saved = tree.layer()
     _, length, _ = normed.shape
     pre, n, window = tree.prefix, len(tree.lengths), m.conv_kernel_size
     mixed, z, b, a = project(
         normed, m.in_proj_qkv, m.in_proj_z, m.in_proj_b, m.in_proj_a
     )
     args = (p["conv_w"], p["A_log"], p["dt_bias"], m.num_k_heads, m.head_k_dim)
-
-    def rows(x: torch.Tensor) -> torch.Tensor:
-        return torch.cat(
-            [x[:, pre - (window - 1) : pre].expand(n, -1, -1), tree.rows(x[0, pre:])],
-            dim=1,
+    heads = None
+    if tree.session:
+        # Only the mixed inputs before the row reach a kept output; the gate inputs there are dropped with it.
+        heads = (
+            session_rows(mixed, saved, pre, window),
+            session_rows(b, None, pre, window),
+            session_rows(a, None, pre, window),
         )
+
+    def rows(x: torch.Tensor, head: torch.Tensor | None = None) -> torch.Tensor:
+        lead = (
+            x[:, pre - (window - 1) : pre] if head is None else head[:, -(window - 1) :]
+        )
+        return torch.cat([lead.expand(n, -1, -1), tree.rows(x[0, pre:])], dim=1)
 
     def packed(x: torch.Tensor) -> torch.Tensor:
         return tree.packed(x[:, window - 1 :])[None]
 
     prep = kernels("gdn_prep")
-    hq, hk, hv, hg, hbeta = prep(
-        mixed[:, :pre].contiguous(),
-        b[:, :pre].contiguous(),
-        a[:, :pre].contiguous(),
-        *args,
-    )
-    sq, sk, sv, sg, sbeta = (
-        packed(x) for x in prep(rows(mixed), rows(b), rows(a), *args)
-    )
+    if heads is None:
+        hq, hk, hv, hg, hbeta = prep(
+            mixed[:, :pre].contiguous(),
+            b[:, :pre].contiguous(),
+            a[:, :pre].contiguous(),
+            *args,
+        )
+        sq, sk, sv, sg, sbeta = (
+            packed(x) for x in prep(rows(mixed), rows(b), rows(a), *args)
+        )
+    else:
+        hq, hk, hv, hg, hbeta = (
+            x[:, window - 1 :] for x in prep(*(h.contiguous() for h in heads), *args)
+        )
+        sq, sk, sv, sg, sbeta = (
+            packed(x)
+            for x in prep(
+                rows(mixed, heads[0]), rows(b, heads[1]), rows(a, heads[2]), *args
+            )
+        )
     repeat = m.num_v_heads // m.num_k_heads
     if repeat > 1:
         hq, hk, sq, sk = (x.repeat_interleave(repeat, dim=2) for x in (hq, hk, sq, sk))
     rule = kernels("chunk_gated_delta_rule")
-    out_prefix, state = rule(
-        hq, hk, hv, g=hg, beta=hbeta, initial_state=None, output_final_state=True, use_qk_l2norm_in_kernel=True,
-    )  # fmt: skip
+    if heads is not None:
+        out_prefix, state = prefix_rule(
+            rule, tree, (hq, hk, hv, hg, hbeta), saved, heads[0], window
+        )
+    else:
+        out_prefix, state = rule(
+            hq, hk, hv, g=hg, beta=hbeta, initial_state=None, output_final_state=True, use_qk_l2norm_in_kernel=True,
+        )  # fmt: skip
     start = state.expand(n, *state.shape[1:]).contiguous()
     out_suffix = suffix_rule(rule, tree, sq, sk, sv, sg, sbeta, start)
     core = torch.cat([out_prefix, out_suffix], dim=1)

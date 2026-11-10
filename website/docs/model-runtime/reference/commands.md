@@ -87,6 +87,7 @@ a frontend attaches to, or for direct runtime development:
 | `--dtype` | `auto` | `auto` (the precision the model was published in), `float32`, `bfloat16` or `float16` (GPUs only). |
 | `--enable-shared-context`, `--no-enable-shared-context` | the family's | Compute the shared state of a multi-question decision request once. On by default for Decision 2.0 only. |
 | `--max-model-len` | the package's limit | Most input tokens one question of a Decision model may have, at most the package's limit; a longer question fails with `max_length_exceeded`. Decision models only. See [Engine arguments](../deploy/engine-args.md#input-limit). |
+| `--session-cache-gib` | `0` (off) | Device memory for the states of earlier decision requests, so a request whose state starts with an earlier one computes only the rest. Needs the shared-context forward. See [Engine arguments](../deploy/engine-args.md#session-cache). |
 | `--max-request-bytes` | `8388608` | Largest request body. |
 | `--max-bundle-tasks` | `64` | Most tasks in one `/v1/bundle` request. |
 | `--load-attempts` | `5` | Loads of a model before it stays `failed`; a damaged package or a failed self-check is not retried. |

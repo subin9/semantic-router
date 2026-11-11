@@ -53,7 +53,7 @@ test('a routed subagent shows a ROUTED entry, with the effort its first request 
 
   await firstStep($, 'high')
   expect(await paneText($, /subagent →/, 120)).toContain('subagent → Haiku, medium effort')
-  expect(await paneText($, /ROUTED/)).toBe(' ROUTED  Rename a variable')
+  expect(await paneText($, /^ routed /)).toBe(' routed  Rename a variable')
 })
 
 test('the router asks complexity and steps in one request, each question as decided', async ($, on) => {
@@ -193,9 +193,9 @@ test('a steps answer that failed still routes by complexity, at the band default
 
   expect(started.model).toBe('sonnet')
   expect(await logged(clock, reply)).toMatchObject({ model: 'sonnet', effort: 'medium', steps: null, effortFrom: 'unsure' })
-  expect(cards).toEqual([expect.objectContaining({ borderColor: 'suggestion' })])
+  expect(cards).toEqual([expect.objectContaining({ backgroundColor: 'suggestion' })])
   expect(texts).toContainEqual('reasoning steps unavailable → default medium · Rename a variable')
-  expect(texts).not.toContainEqual(expect.stringContaining('SKIPPED'))
+  expect(texts).not.toContainEqual(expect.stringContaining('skipped'))
 })
 
 test('a steps answer without a score is a failed one', async ($, on) => {
@@ -216,7 +216,7 @@ test('an answer with no complexity is SKIPPED even when steps answered', { optio
   const { texts } = await rowTree($, agentRow('call-1'))
 
   expect(started.model).toBe('opus')
-  expect(texts).toContain('○  SKIPPED  subagent started without routing')
+  expect(texts).toContain('▚▞ vSR  skipped  subagent started without routing')
 })
 
 test('Opus never runs below the effort the subagent would have had', async ($, on) => {
@@ -286,31 +286,31 @@ test('a vague answer keeps the subagent on its default and shows KEPT', async ($
   const started = await $.agent.spawn(SPAWN)
 
   expect(started.model).toBe('claude-opus-5-5')
-  expect(await paneText($, /KEPT/)).toBe(' KEPT  Rename a variable')
+  expect(await paneText($, /^ kept /)).toBe(' kept  Rename a variable')
   expect(await paneText($, /stays on/)).toBe('subagent stays on Opus 5.5 · model unsure · confidence 0.10 < 0.30')
 })
 
-test('a kept subagent says so in one framed line under its row, so the user sees the router answered', async ($, on) => {
+test('a kept subagent says so in one line under its row, so the user sees the router answered', async ($, on) => {
   engine(on, { complexity: { score: 1, confidence: 0.1 } })
   on('agent.spawn', () => ({ model: 'claude-opus-5-5', agentId: 'agent-2' }))
   await $.agent.spawn(SPAWN)
 
-  const { texts, cards, frames } = await rowTree($, agentRow('call-1'))
+  const { texts, props, cards } = await rowTree($, agentRow('call-1'))
 
   expect(cards).toEqual([])
-  expect(frames).toEqual([expect.objectContaining({ borderStyle: 'round', borderColor: 'suggestion', borderDimColor: true })])
-  expect(texts).toContain(' vSR   KEPT  subagent stays on Opus 5.5 · model unsure')
+  expect(texts).toContain('▚▞ vSR kept  subagent stays on Opus 5.5 · model unsure')
+  expect(props[texts.indexOf('kept')]).toMatchObject({ color: 'suggestion' })
 })
 
-test('a row too narrow for a frame keeps the one-line form unframed', async ($, on) => {
+test('a narrow row keeps the one-line form and clips its headline', async ($, on) => {
   engine(on, { complexity: { score: 1, confidence: 0.1 } })
   on('agent.spawn', () => ({ model: 'claude-opus-5-5', agentId: 'agent-2' }))
   await $.agent.spawn(SPAWN)
 
-  const { texts, frames } = await rowTree($, agentRow('call-1', 26))
+  const { texts, cards } = await rowTree($, agentRow('call-1', 26))
 
-  expect(frames).toEqual([])
-  expect(texts.some(text => text.startsWith(' vSR   KEPT'))).toBe(true)
+  expect(cards).toEqual([])
+  expect(texts).toContain('▚▞ vSR kept  subagent…')
 })
 
 test('an Agent row with a route draws a ROUTED card with the difficulty meter, and the effort once known', { options: { display: 'verbose' } }, async ($, on) => {
@@ -320,14 +320,16 @@ test('an Agent row with a route draws a ROUTED card with the difficulty meter, a
 
   const before = await rowTree($, agentRow('call-1'))
   expect(before.texts[0]).toBe(ENGINE_ROW)
-  expect(before.cards).toEqual([expect.objectContaining({ borderStyle: 'round', borderColor: 'suggestion' })])
-  expect(before.texts).toContain('⇢  ROUTED  subagent → Haiku')
+  expect(before.cards).toEqual([expect.objectContaining({ backgroundColor: 'suggestion' })])
+  expect(before.texts).toContain('▚▞ vSR  routed  subagent → Haiku')
 
   await firstStep($, 'high')
-  const { texts } = await rowTree($, agentRow('call-1'))
+  const { texts, props } = await rowTree($, agentRow('call-1'))
 
-  expect(texts).toContain('⇢  ROUTED  subagent → Haiku · medium effort')
-  expect(texts).toContain('easy ▕███▏░░│░░░░░░░░░░░░│░░░░░░▏ hard  0.26 of 2 · easy task')
+  expect(texts).toContain('▚▞ vSR  routed  subagent → Haiku · medium effort')
+  expect(texts).toContain('easy ▐▐▐▐│▐▐▐▐▐▐▐▐│▐▐▐▐ hard  0.26 of 2 · easy task')
+  // 0.26 of 2 lights the first two of 16 cells.
+  expect(props[texts.indexOf('▐▐')]).toMatchObject({ color: 'suggestion' })
   expect(texts).toContainEqual('reasoning steps 0.17 · Haiku runs at medium · Rename a variable')
 })
 
@@ -364,9 +366,9 @@ test('a footnote longer than the card is clipped to it, and the card keeps its w
 
   const { texts, cards } = await rowTree($, agentRow('call-1', 60))
 
-  expect(cards).toEqual([expect.objectContaining({ width: 52 })])
-  // The lines take the card's 52 columns but its border and padding.
-  expect(texts).toContain('reasoning steps unsure (0.23) → default medium …')
+  expect(cards).toEqual([expect.objectContaining({ backgroundColor: 'suggestion' })])
+  // The lines under the header start 7 columns in, under the pill, so they have 49 of the card's 56.
+  expect(texts).toContain('reasoning steps unsure (0.23) → default medium ·…')
 })
 
 test('the one-line form of a route keeps its effort, and gives up the detail before it', async ($, on) => {
@@ -378,7 +380,7 @@ test('the one-line form of a route keeps its effort, and gives up the detail bef
   const { texts, cards } = await rowTree($, agentRow('call-1', 55))
 
   expect(cards).toEqual([])
-  expect(texts).toContain(' vSR   ROUTED  subagent → Haiku, medium effort')
+  expect(texts).toContain('▚▞ vSR routed  subagent → Haiku, medium effort')
 })
 
 test('a vague answer draws a KEPT card with the difficulty meter', { options: { display: 'verbose' } }, async ($, on) => {
@@ -388,9 +390,9 @@ test('a vague answer draws a KEPT card with the difficulty meter', { options: { 
 
   const { texts, cards } = await rowTree($, agentRow('call-1'))
 
-  expect(cards).toEqual([expect.objectContaining({ borderColor: 'suggestion' })])
-  expect(texts).toContain('≈  KEPT  subagent stays on Opus 5.5')
-  expect(texts).toContain('easy ▕██████│██████░░░░░░│░░░░░░▏ hard  1.00 of 2 · multi-step task')
+  expect(cards).toEqual([expect.objectContaining({ backgroundColor: 'suggestion' })])
+  expect(texts).toContain('▚▞ vSR  kept  subagent stays on Opus 5.5')
+  expect(texts).toContain('easy ▐▐▐▐│▐▐▐▐▐▐▐▐│▐▐▐▐ hard  1.00 of 2 · multi-step task')
   expect(texts).toContain('model unsure · confidence 0.27 < 0.30')
 })
 
@@ -401,10 +403,10 @@ test('an Agent row whose classifier failed draws a SKIPPED card of two lines and
 
   const { texts, cards } = await rowTree($, agentRow('call-1'))
 
-  expect(cards).toEqual([expect.objectContaining({ borderColor: 'inactive' })])
-  expect(texts).toContain('○  SKIPPED  subagent started without routing')
+  expect(cards).toEqual([expect.objectContaining({ backgroundColor: 'inactive' })])
+  expect(texts).toContain('▚▞ vSR  skipped  subagent started without routing')
   expect(texts).toContainEqual('the decision model answered with an error (HTTP 500)')
-  expect(texts.filter(text => text.includes('▕'))).toEqual([])
+  expect(texts.filter(text => text.includes('▐'))).toEqual([])
 })
 
 test('a resumed subagent keeps the model and effort it ran on: nothing is asked and nothing is recorded', async ($, on) => {
@@ -416,7 +418,7 @@ test('a resumed subagent keeps the model and effort it ran on: nothing is asked 
 
   expect(started.model).toBe('opus')
   expect(reply.bodies).toEqual([])
-  expect(await paneText($, /ROUTED|KEPT/)).toBeUndefined()
+  expect(await paneText($, /^ (routed|kept) /)).toBeUndefined()
 })
 
 test('a route to the session\'s own tier names no model, so a pinned session model is kept', async ($, on) => {

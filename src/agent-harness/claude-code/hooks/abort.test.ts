@@ -39,7 +39,7 @@ test('a request cancelled with its call (the user pressed Esc) leaves the runtim
   expect(cancelled).not.toMatchObject({ decision: 'ask' })
   expect(next).not.toMatchObject({ decision: 'ask' })
   expect(reply.toasts).toEqual([])
-  expect(await paneText($, /SKIPPED|HELD/)).toBeUndefined()
+  expect(await paneText($, /^ (skipped|held) /)).toBeUndefined()
 })
 
 test('a refused command\'s result is not read for personal data: nothing of the tool\'s went to Claude', async ($, on) => {
@@ -49,7 +49,7 @@ test('a refused command\'s result is not read for personal data: nothing of the 
 
   await $.tool.call({ tool: 'Bash', command: 'git reset --hard HEAD~1', tool_use_id: 'b1' } as never)
 
-  expect(await paneText($, /SKIPPED|REDACTED/)).toBeUndefined()
+  expect(await paneText($, /^ (skipped|redacted) /)).toBeUndefined()
 })
 
 test('a redact request cancelled with its command records nothing: the run was cut short, not left unchecked', async ($, on) => {
@@ -68,6 +68,6 @@ test('a redact request cancelled with its command records nothing: the run was c
 
   await $.tool.call({ tool: 'Bash', command: 'make long-test', tool_use_id: 'b2' } as never)
 
-  expect(await paneText($, /SKIPPED/)).toBeUndefined()
+  expect(await paneText($, /^ skipped /)).toBeUndefined()
   expect(reply.toasts).toEqual([])
 })

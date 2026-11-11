@@ -234,10 +234,9 @@ export async function rowTree($: Test, target: object) {
   const ui = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', viewport: { columns: 100, rows: 30 }, ...target } as never)
   const texts = (await ui.findAll({ type: 'Text' })).map(row => row.text ?? '')
   const props = (await ui.findAll({ type: 'Text' })).map(row => row.props as Props)
-  const boxes = (await ui.findAll({ type: 'Box' })).map(row => row.props as Props).filter(box => box.borderStyle !== undefined)
   await ui.unmount()
-  // A card has a bright border; a frame, the dim one around the one-line form.
-  return { texts, props, cards: boxes.filter(box => !box.borderDimColor), frames: boxes.filter(box => box.borderDimColor) }
+  // A card names its outcome in a pill, inverse text on its color; the one-line form names it in its color alone.
+  return { texts, props, cards: props.filter(one => one.color === 'inverseText' && one.backgroundColor !== undefined) }
 }
 
 export const rowTexts = async ($: Test, target: object) => (await rowTree($, target)).texts
@@ -264,7 +263,7 @@ export const bandRow = (bodyColumns = 100, maxRows = 10) =>
     props: { hasSurvey: false, isWorking: false, maxRows, bodyColumns, scroll: { offset: 0, bodyRows: maxRows }, view: {} },
   }) as const
 
-export const vsrLines = (lines: string[]) => lines.filter(text => text.startsWith(' vSR   '))
+export const vsrLines = (lines: string[]) => lines.filter(text => text.startsWith('▚▞ vSR '))
 
 // The decision log as last written, one parsed line each.
 export const logLines = (reply: Reply) =>

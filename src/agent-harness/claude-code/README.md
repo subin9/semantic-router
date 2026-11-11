@@ -42,8 +42,10 @@ installed into `~/.local/share/vsr`, without sudo.
 
 ## What you see
 
-vSR draws each decision under the row it is about, and keeps a one-line tally, in a dim frame,
-above the prompt. `/vsr` opens a pane with every decision of the session and the current setup.
+vSR draws each decision under the row it is about, and keeps a one-line tally above the prompt.
+Every line vSR draws starts with its mark, a small yellow and blue V, and its name, so it reads as
+a sentence: `▚▞ vSR redacted  3 items hidden: email, phone`. `/vsr` opens a pane with every decision
+of the session and the current setup.
 
 The top of the `/vsr` pane, under the logo, holds the controls, which you can change at any time:
 
@@ -58,23 +60,24 @@ The same changes work as commands: `/vsr redact off`, `/vsr check on`, `/vsr gua
 
 By default (`display: normal`) vSR only interrupts when it matters:
 
-- **A card** when something needs your eyes:
-  - `HELD`: a Bash command waits for your yes or no in Claude Code's permission dialog. The dialog says which part was risky and why.
-  - `DECLINED` or `APPROVED`: what you answered.
-  - `SHIELDED`: a file or page tried to instruct Claude; Claude was told to treat it as data.
-  - `UNVERIFIED`: the answer claims things that what Claude read does not back. Look twice.
-  - `REDACTED` with a note on unchecked characters: a long output was only partly checked in time.
-  - `WITHHELD`: redact or shield waits `until done` and could not finish its check, so Claude got
+- **A card** when something needs your eyes: the outcome in a filled pill, then the score as a row of
+  cells and a note under it:
+  - `held`: a Bash command waits for your yes or no in Claude Code's permission dialog. The dialog says which part was risky and why.
+  - `declined` or `approved`: what you answered.
+  - `shielded`: a file or page tried to instruct Claude; Claude was told to treat it as data.
+  - `unverified`: the answer claims things that what Claude read does not back. Look twice.
+  - `redacted` with a note on unchecked characters: a long output was only partly checked in time.
+  - `withheld`: redact or shield waits `until done` and could not finish its check, so Claude got
     no output from that file or command. The card says why.
-- **One line in a dim frame**, set apart from Claude's reply, when vSR changed something, or the
-  router decided on a subagent:
-  - `ROUTED`: the subagent's model and effort, and how hard the task looked.
-  - `KEPT`: the subagent stays on your session's model, and why (the router was not sure enough, or
+- **One line**, the outcome in its app's colour, when vSR changed something, or the router decided
+  on a subagent:
+  - `routed`: the subagent's model and effort, and how hard the task looked.
+  - `kept`: the subagent stays on your session's model, and why (the router was not sure enough, or
     `routerGoal` is `quality`).
-  - `REDACTED`: what kinds of data were hidden from a file or command. The same kinds hidden from the same file again are not repeated.
-  - `ESCALATED`: you pushed back; Claude re-checks and the next subagent goes one step up.
-  - `PARTIAL`: an output was read only in part, and the rest went to Claude unchecked.
-  - `SKIPPED`: an app got no answer in time, and the line says what went unchecked (for example
+  - `redacted`: what kinds of data were hidden from a file or command. The same kinds hidden from the same file again are not repeated.
+  - `escalated`: you pushed back; Claude re-checks and the next subagent goes one step up.
+  - `partial`: an output was read only in part, and the rest went to Claude unchecked.
+  - `skipped`: an app got no answer in time, and the line says what went unchecked (for example
     `ticket.txt went to Claude unchecked for personal data`); Claude went on without it.
 - **Nothing** when all went as it would have without vSR: an allowed command or a grounded answer.
   These are counted in the tally and listed in `/vsr`.
@@ -121,7 +124,7 @@ and new lines; pipes, quotes including `$'...'`, `$(...)`, subshells, comments a
 respected) and asks about each part in turn whether it needs a person's review. When a part scores
 0.9 or more, Claude Code's permission dialog asks you, with the reason. All parts share one wait,
 `guardWait` (3 s by default). A part the decision model could not check in that time (slow, offline
-or an error answer) lets the command run with a `SKIPPED` row, as redact and shield step aside; only
+or an error answer) lets the command run with a `skipped` row, as redact and shield step aside; only
 the fixed rules below and a score already over the line hold it. With `until done` guard waits up to
 60 s and holds a command it could not check. A command of more than 12 parts is always held.
 
@@ -140,7 +143,7 @@ would ask about or refuse.
 Check is off by default because it is slow without a GPU. When a turn ends, it gives the decision
 model up to 8,000 characters of what Claude read and 8,000 of Claude's answer. A CPU runtime reads
 about 0.35 to 0.6 ms per character, so a long answer takes 5 to 10 s. That is past check's 3 s limit,
-so check would mostly show `SKIPPED`. It never holds Claude up, though: past the limit it steps aside.
+so check would mostly show `skipped`. It never holds Claude up, though: past the limit it steps aside.
 
 Turn it on when the decision model runs on a GPU, on this machine or behind a remote runtime's API
 (`/vsr:setup`, Custom, then pick check), or with `/plugin configure vsr@vllm-sr`. A GPU runtime is
@@ -159,7 +162,7 @@ Redact hides names, emails, phone numbers, card numbers, IP addresses, addresses
 secrets (API keys, tokens, private keys, passwords in config files and connection URLs). It waits
 `redactWait` (3 s by default) for the decision model, and shield then waits `shieldWait` (2 s by
 default) on a `Read` or a fetched page; when redact ran out of time the model is still busy, so shield
-steps aside with it and one `SKIPPED` row says both (unless shield waits `until done`). On CPU redact reads about the first 8,000 characters of an output in 3 s, and says so
+steps aside with it and one `skipped` row says both (unless shield waits `until done`). On CPU redact reads about the first 8,000 characters of an output in 3 s, and says so
 when an output was longer. With `until done` it reads the whole output (up to 128,000 characters
 and 60 s), and an output it cannot finish is withheld from Claude instead of passed on unchecked. The output of a
 command that failed is hidden in too: Claude reads the error with the values replaced. If Claude then
@@ -188,10 +191,10 @@ A log path under `~/.claude/` follows `CLAUDE_CONFIG_DIR` when it is set. A rela
 path is left as it is rather than replaced by the log.
 
 A wait in seconds is how long the app waits for the decision model before it lets through what it did
-not check: redact and shield pass the rest of the output on unchecked (`PARTIAL` or `SKIPPED`), and
+not check: redact and shield pass the rest of the output on unchecked (`partial` or `skipped`), and
 guard holds a command with a step it did not check. `done` waits until the check finishes, at most
 60 s. If it cannot finish (a timeout, an error answer, the decision model offline, or an output read
-only in part), redact and shield withhold the output from Claude (`WITHHELD`), and guard holds the
+only in part), redact and shield withhold the output from Claude (`withheld`), and guard holds the
 command, even while the model is offline. A call you cancel is not withheld. The router, escalate and
 check keep their fixed waits (1.5 s, 1.5 s and 3 s).
 
@@ -202,7 +205,8 @@ ones you already answered in `/vsr`) and fits the thresholds to your answers, mo
 
 The logo, the vLLM Semantic Router V, sits at the top of the `/vsr` pane: a picture in kitty, Ghostty
 and iTerm2 3.5 or later, and drawn in characters elsewhere (smooth wedge characters in terminals that draw them, such as VS Code
-1.108 or later and GNOME Terminal; plain blocks in the rest).
+1.108 or later and GNOME Terminal; plain blocks in the rest). `logo: off` leaves it out. Each line vSR
+draws in the transcript starts with a small V in two block characters (`▚▞`) whatever `logo` is.
 
 ## Troubleshooting
 

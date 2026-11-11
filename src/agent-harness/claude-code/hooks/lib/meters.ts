@@ -4,23 +4,24 @@ import { DIFFICULTY_MAX } from './settings'
 export type Tone = 'fill' | 'rest' | 'rule' | 'hold'
 export type Segment = { text: string; tone: Tone }
 
-const CELLS = 24
-const EIGHTHS = ' ▏▎▍▌▋▊▉█'
+const CELLS = 16
+// A right half block, so lit and unlit cells read as separate pixels.
+const CELL = '▐'
 
-// Fills `cells` cells left to right in eighths. `cuts` put a glyph before the cell at each `at`, and the fill runs on across it.
+// One cell for each `max / cells`, lit up to `value`. `cuts` put a glyph before the cell at each `at`, or after the last
+// cell for a line at the very end.
 function meterOf(value: number, max: number, cells: number, cuts: { at: number; glyph: string; tone: Tone }[]): Segment[] {
   const ratio = Number.isFinite(value) ? Math.min(1, Math.max(0, value / max)) : 0
-  const eighths = Math.round(ratio * cells * 8)
+  const lit = Math.round(ratio * cells)
   const segments: Segment[] = []
   const push = (text: string, tone: Tone) => {
     const last = segments.at(-1)
     if (last?.tone === tone) last.text += text
     else segments.push({ text, tone })
   }
-  for (let i = 0; i < cells; i++) {
+  for (let i = 0; i <= cells; i++) {
     for (const cut of cuts) if (cut.at === i) push(cut.glyph, cut.tone)
-    const n = Math.min(8, Math.max(0, eighths - i * 8))
-    push(n === 0 ? '░' : EIGHTHS[n], n === 0 ? 'rest' : 'fill')
+    if (i < cells) push(CELL, i < lit ? 'fill' : 'rest')
   }
   return segments
 }

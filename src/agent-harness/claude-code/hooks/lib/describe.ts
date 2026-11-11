@@ -11,7 +11,7 @@ export type Body = { kind: 'gauge'; gauge: Gauge } | { kind: 'chips'; chips: str
 
 // A card for the decisions worth noticing, a single compact line for an allowed command.
 export type Inline =
-  | { kind: 'card'; glyph: string; color: Color; title: string; tail?: string; body?: Body; note: string }
+  | { kind: 'card'; color: Color; title: string; tail?: string; body?: Body; note: string }
   | { kind: 'compact'; score: number; threshold: number }
 
 // How much a decision asks of the person: `act`, look now (held, shielded, unverified, read in part with data
@@ -63,8 +63,8 @@ const riskColor = (score: number, line: number): Color => (score >= line ? 'erro
 const difficultyGauge = (value: number, tiers: Tiers, fill: Color): Body => ({
   kind: 'gauge',
   gauge: {
-    lead: 'easy ▕',
-    close: '▏ hard',
+    lead: 'easy ',
+    close: ' hard',
     segments: difficultyMeter(value, tiers),
     fill,
     fits: [[`${fixed(value)} of 2`, ` · ${taskWord(value, tiers)}`], [`${fixed(value)} of 2`, ''], [fixed(value), '']],
@@ -75,8 +75,8 @@ const difficultyGauge = (value: number, tiers: Tiers, fill: Color): Body => ({
 const riskGauge = (label: string, value: number, line: number, word = 'holds at'): Body => ({
   kind: 'gauge',
   gauge: {
-    lead: `${label} ▕`,
-    close: '▏',
+    lead: `${label} `,
+    close: '',
     segments: holdMeter(value, line),
     fill: riskColor(value, line),
     fits: [[fixed(value), `  ${word} ${fixed(line)}`], [fixed(value), '']],
@@ -86,8 +86,8 @@ const riskGauge = (label: string, value: number, line: number, word = 'holds at'
 const unsupportedGauge = (value: number, line: number, fill: Color): Body => ({
   kind: 'gauge',
   gauge: {
-    lead: 'unsupported ▕',
-    close: '▏',
+    lead: 'unsupported ',
+    close: '',
     segments: holdMeter(value, line),
     fill,
     fits: [[fixed(value), `  flags at ${fixed(line)}`], [fixed(value), '']],
@@ -155,7 +155,6 @@ const KINDS: { [K in Decision['kind']]: Kind<Extract<Decision, { kind: K }>> } =
         subject: oneLine(d.task),
         inline: {
           kind: 'card',
-          glyph: APPS.router.glyph,
           color: APPS.router.color,
           title,
           body: difficultyGauge(d.level, d.tiers, APPS.router.color),
@@ -200,7 +199,7 @@ const KINDS: { [K in Decision['kind']]: Kind<Extract<Decision, { kind: K }>> } =
       const part = oneLine(d.part)
       const more = stepsMore(d.parts)
       const base = { app: 'guard' as const, subject: part, more }
-      const asked = (badge: string, color: Color, glyph: string, headline: string, detail: string): Described => ({
+      const asked = (badge: string, color: Color, headline: string, detail: string): Described => ({
         ...base,
         badge,
         color,
@@ -208,7 +207,6 @@ const KINDS: { [K in Decision['kind']]: Kind<Extract<Decision, { kind: K }>> } =
         detail,
         inline: {
           kind: 'card',
-          glyph,
           color,
           title: part,
           tail: more,
@@ -227,9 +225,9 @@ const KINDS: { [K in Decision['kind']]: Kind<Extract<Decision, { kind: K }>> } =
           inline: { kind: 'compact', score: d.review, threshold: d.threshold },
         }
       }
-      if (d.outcome === 'approved') return asked('APPROVED', 'permission', '✓', `you let it run · ${words}`, reviewScore(d))
-      if (d.outcome === 'declined') return asked('DECLINED', 'error', '✕', `you said no · ${words}`, reviewScore(d))
-      return asked('HELD', 'warning', APPS.guard.glyph, `waiting for you · ${words}`, `${reviewScore(d)} · ${part}`)
+      if (d.outcome === 'approved') return asked('APPROVED', 'permission', `you let it run · ${words}`, reviewScore(d))
+      if (d.outcome === 'declined') return asked('DECLINED', 'error', `you said no · ${words}`, reviewScore(d))
+      return asked('HELD', 'warning', `waiting for you · ${words}`, `${reviewScore(d)} · ${part}`)
     },
     weight: d => (d.verdict === 'ask' ? 'act' : 'quiet'),
   },
@@ -245,7 +243,6 @@ const KINDS: { [K in Decision['kind']]: Kind<Extract<Decision, { kind: K }>> } =
         subject: oneLine(d.prompt),
         inline: {
           kind: 'card',
-          glyph: APPS.escalate.glyph,
           color: APPS.escalate.color,
           title: headline,
           body: { kind: 'chips', chips: d.signals.map(signalText) },
@@ -271,7 +268,6 @@ const KINDS: { [K in Decision['kind']]: Kind<Extract<Decision, { kind: K }>> } =
         subject: d.source,
         inline: {
           kind: 'card',
-          glyph: APPS.redact.glyph,
           color: APPS.redact.color,
           title: headline,
           body: { kind: 'chips', chips },
@@ -297,7 +293,6 @@ const KINDS: { [K in Decision['kind']]: Kind<Extract<Decision, { kind: K }>> } =
         subject: d.source,
         inline: {
           kind: 'card',
-          glyph: APPS.shield.glyph,
           color: APPS.shield.color,
           title: headline,
           body: riskGauge('injection', d.score, d.threshold, 'warns at'),
@@ -322,7 +317,6 @@ const KINDS: { [K in Decision['kind']]: Kind<Extract<Decision, { kind: K }>> } =
         subject: oneLine(d.prompt) || 'the answer',
         inline: {
           kind: 'card',
-          glyph: isGrounded ? APPS.check.glyph : LOOKS.unverified.glyph,
           color,
           title: headline,
           body: unsupportedGauge(d.score, d.threshold, color),
@@ -356,7 +350,7 @@ const KINDS: { [K in Decision['kind']]: Kind<Extract<Decision, { kind: K }>> } =
           headline,
           detail: note,
           subject: oneLine(d.subject),
-          inline: { kind: 'card', glyph: APPS.off.glyph, color: APPS.off.color, title: headline, note },
+          inline: { kind: 'card', color: APPS.off.color, title: headline, note },
         }
       }
       const headline =
@@ -368,7 +362,7 @@ const KINDS: { [K in Decision['kind']]: Kind<Extract<Decision, { kind: K }>> } =
         headline,
         detail: `${d.why} · /vsr:setup checks it`,
         subject: oneLine(d.subject),
-        inline: { kind: 'card', glyph: APPS.off.glyph, color: APPS.off.color, title: headline, note: d.why },
+        inline: { kind: 'card', color: APPS.off.color, title: headline, note: d.why },
       }
     },
     // A withheld output is a card: Claude got nothing, and the person decides what to change.
@@ -393,7 +387,7 @@ export const named = (described: Described): Described => ({
   headline: `${clip(described.subject, NAMED_SUBJECT_WIDTH)} · ${described.headline}`,
 })
 
-export type TallyItem = { glyph: string; color: Color; text: string }
+export type TallyItem = { color: Color; text: string }
 
 const heldOutcomes = (list: readonly Decision[]) => {
   const asked = list.flatMap(d => (d.kind === 'guard' && d.verdict === 'ask' ? [d.outcome ?? 'waiting'] : []))
@@ -405,26 +399,29 @@ const heldOutcomes = (list: readonly Decision[]) => {
 }
 
 // Most urgent first, so a narrow band drops what went as usual before what needs a look; an item shows once its count is above zero.
-const TALLIES: readonly { glyph: string; color: Color; word: string; count: (list: readonly Decision[]) => number; more?: (list: readonly Decision[]) => string }[] = [
-  { ...APPS.guard, word: 'held', count: list => list.filter(d => d.kind === 'guard' && d.verdict === 'ask').length, more: heldOutcomes },
-  { ...LOOKS.unverified, word: 'unverified', count: list => list.filter(d => d.kind === 'check' && d.verdict === 'unverified').length },
-  { ...LOOKS.withheld, word: 'withheld', count: list => list.filter(d => d.kind === 'unavailable' && d.withheld).length },
-  { ...APPS.shield, word: 'shielded', count: list => list.filter(d => d.kind === 'shield').length },
-  { ...APPS.redact, word: 'hidden', count: list => list.reduce((sum, d) => sum + (d.kind === 'redact' ? hiddenCount(d.counts) : 0), 0) },
-  { ...APPS.router, word: 'routed', count: list => list.filter(d => d.kind === 'route').length },
-  { ...APPS.escalate, word: 'escalated', count: list => list.filter(d => d.kind === 'escalate').length },
-  { ...LOOKS.kept, word: 'kept', count: list => list.filter(d => d.kind === 'keep').length },
-  { ...LOOKS.allowed, word: 'allowed', count: list => list.filter(d => d.kind === 'guard' && d.verdict === 'pass').length },
-  { ...APPS.check, word: 'grounded', count: list => list.filter(d => d.kind === 'check' && d.verdict === 'grounded').length },
-  { ...APPS.off, word: 'skipped', count: list => list.filter(d => d.kind === 'unavailable' && !d.offline && !d.withheld).length },
+const TALLIES: readonly { color: Color; word: string; count: (list: readonly Decision[]) => number; more?: (list: readonly Decision[]) => string }[] = [
+  { color: APPS.guard.color, word: 'held', count: list => list.filter(d => d.kind === 'guard' && d.verdict === 'ask').length, more: heldOutcomes },
+  { color: LOOKS.unverified.color, word: 'unverified', count: list => list.filter(d => d.kind === 'check' && d.verdict === 'unverified').length },
+  { color: LOOKS.withheld.color, word: 'withheld', count: list => list.filter(d => d.kind === 'unavailable' && d.withheld).length },
+  { color: APPS.shield.color, word: 'shielded', count: list => list.filter(d => d.kind === 'shield').length },
+  { color: APPS.redact.color, word: 'hidden', count: list => list.reduce((sum, d) => sum + (d.kind === 'redact' ? hiddenCount(d.counts) : 0), 0) },
+  { color: APPS.router.color, word: 'routed', count: list => list.filter(d => d.kind === 'route').length },
+  { color: APPS.escalate.color, word: 'escalated', count: list => list.filter(d => d.kind === 'escalate').length },
+  { color: LOOKS.kept.color, word: 'kept', count: list => list.filter(d => d.kind === 'keep').length },
+  { color: LOOKS.allowed.color, word: 'allowed', count: list => list.filter(d => d.kind === 'guard' && d.verdict === 'pass').length },
+  { color: APPS.check.color, word: 'grounded', count: list => list.filter(d => d.kind === 'check' && d.verdict === 'grounded').length },
+  { color: APPS.off.color, word: 'skipped', count: list => list.filter(d => d.kind === 'unavailable' && !d.offline && !d.withheld).length },
 ]
 
 export function tallyOf(list: readonly Decision[]): TallyItem[] {
-  return TALLIES.flatMap(({ glyph, color, word, count, more }) => {
+  return TALLIES.flatMap(({ color, word, count, more }) => {
     const n = count(list)
-    return n > 0 ? [{ glyph, color, text: `${n} ${word}${more?.(list) ?? ''}` }] : []
+    return n > 0 ? [{ color, text: `${n} ${word}${more?.(list) ?? ''}` }] : []
   })
 }
 
+// Each item is a pixel in its app's color, a space and its words; two spaces between items.
+export const TALLY_DOT = '▪'
+
 export const tallyWidth = (items: readonly TallyItem[]) =>
-  items.reduce((sum, item, index) => sum + (index === 0 ? 0 : 2) + item.glyph.length + 1 + item.text.length, 0)
+  items.reduce((sum, item, index) => sum + (index === 0 ? 0 : 2) + TALLY_DOT.length + 1 + item.text.length, 0)

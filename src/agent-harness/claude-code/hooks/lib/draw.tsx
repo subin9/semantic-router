@@ -2,7 +2,7 @@ import type { EngineInterface } from 'claude-code'
 
 import type { App, Calibration, Decision, Spend } from '../../types'
 import { APP_NAMES, APPS, type Color, LOOKS, type Section, SECTIONS, sectionOf } from './apps'
-import { type Body, type Described, describe, type Gauge, type TallyItem, tallyOf, tallyWidth, type Weight } from './describe'
+import { type Body, type Described, describe, type Gauge, TALLY_DOT, type TallyItem, tallyOf, tallyWidth, type Weight } from './describe'
 import { ANSWERS, type Answer, answersFor } from './labels'
 import { BRAND, brand, type Logo, wordmark, wordmarkHeight } from './logo'
 import { holdMeter, type Segment, textWidth } from './meters'
@@ -14,28 +14,34 @@ export type Elements = ReturnType<EngineInterface['ui']['resolve']>
 const MIN_DETAIL_WIDTH = 8
 // Below this the inline decision is the one-line form: a card would wrap.
 const MIN_CARD_COLUMNS = 56
-const MAX_CARD_WIDTH = 76
-// A card's frame and padding take this many columns from its width.
-const CARD_CHROME = 4
+// Its lines under the pill keep the 72 columns they had inside the frame the card used to have.
+const MAX_CARD_WIDTH = 79
+// A card's lines under its header start under its pill.
+const CARD_INDENT = `${BRAND} `.length
 const COMPACT_RISK_CELLS = 12
-// Below this many columns inside a frame, the one-line form goes unframed.
-const MIN_FRAMED_COLUMNS = 24
 
-// The detail gives way before the headline does.
+// The one-line form: the mark, the outcome in its color, the headline, so it reads "vSR redacted ...". The detail gives
+// way before the headline does.
 function badgeLine(elements: Elements, { badge, color, headline, detail }: Described, columns: number) {
   const { Text } = elements
-  const room = columns - `${BRAND}  ${badge}  `.length
+  const word = badge.toLowerCase()
+  const room = columns - `${BRAND} ${word}  `.length
   const head = clip(headline, Math.max(1, room))
   const roomLeft = room - head.length - 2
   return (
     <Text>
       {brand(elements)}
       {' '}
-      <Text backgroundColor={color} color="inverseText">{` ${badge} `}</Text>
-      {` ${head}`}
+      <Text color={color}>{word}</Text>
+      {`  ${head}`}
       {detail !== '' && roomLeft >= MIN_DETAIL_WIDTH ? <Text dimColor>{`  ${clip(detail, roomLeft)}`}</Text> : null}
     </Text>
   )
+}
+
+// The outcome of a decision that asks for a look, as a pill in its color.
+function pill({ Text }: Elements, badge: string, color: Color) {
+  return <Text backgroundColor={color} color="inverseText" weight="bold">{` ${badge.toLowerCase()} `}</Text>
 }
 
 function meterCells({ Text }: Elements, segments: Segment[], fill: Color) {
@@ -87,85 +93,55 @@ function bodyLine(elements: Elements, body: Body, color: Color, room: number) {
   return body.kind === 'gauge' ? meterLine(elements, body.gauge, room) : chipsLine(elements, body.chips, color, room)
 }
 
-// The app tag goes at the right of the header, else of the footnote, wherever it fits without clipping either;
-// else it is left out. The logo's mark is drawn once, at the top of the pane, not on each card.
+// A decision worth a look: the mark and its outcome as a pill, then its meter or chips and its note, under the title.
+// No frame: the pill and the indent set it apart from Claude's words in three rows.
 function card(
   elements: Elements,
-  { app, badge }: Described,
+  { badge }: Described,
   one: Extract<Described['inline'], { kind: 'card' }>,
   columns: number,
 ) {
   const { Box, Text } = elements
-  const width = Math.min(columns - CARD_CHROME, MAX_CARD_WIDTH)
-  const inner = width - CARD_CHROME
-  const lead = one.glyph.length + 1 + badge.length + 2 + 1
+  const width = Math.min(columns, MAX_CARD_WIDTH)
+  const inner = width - CARD_INDENT
   const tail = one.tail ?? ''
-  const title = `${clip(one.title, Math.max(1, inner - lead - tail.length))}${tail}`
-  const label = `${BRAND} · ${APPS[app].name}`
-  const tag = (
-    <Text>
-      {brand(elements)}
-      <Text dimColor>{` · ${APPS[app].name}`}</Text>
-    </Text>
-  )
-  const tagRoom = label.length + 2
-  const isHeaderTagged = lead + title.length + tagRoom <= inner
-  const isNoteTagged = !isHeaderTagged && one.note.length + tagRoom <= inner
+  const title = `${clip(one.title, Math.max(1, inner - ` ${badge} `.length - 1 - tail.length))}${tail}`
   return (
-    <Box borderStyle="round" borderColor={one.color} paddingX={1} flexDirection="row" gap={1} width={width}>
-      <Box flexDirection="column" flexGrow={1}>
-        <Box flexDirection="row" justifyContent="space-between">
-          <Text>
-            <Text color={one.color}>{one.glyph}</Text>
-            {' '}
-            <Text backgroundColor={one.color} color="inverseText">{` ${badge} `}</Text>
-            {` ${title}`}
-          </Text>
-          {isHeaderTagged ? tag : null}
-        </Box>
+    <Box flexDirection="column" width={width}>
+      <Text>
+        {brand(elements)}
+        {' '}
+        {pill(elements, badge, one.color)}
+        {` ${title}`}
+      </Text>
+      <Box flexDirection="column" paddingLeft={CARD_INDENT}>
         {one.body ? bodyLine(elements, one.body, one.color, inner) : null}
-        <Box flexDirection="row" justifyContent="space-between">
-          <Text dimColor>{clip(one.note, inner)}</Text>
-          {isNoteTagged ? tag : null}
-        </Box>
+        <Text dimColor>{clip(one.note, inner)}</Text>
       </Box>
     </Box>
   )
 }
 
-const COMPACT_LEAD = `${LOOKS.allowed.glyph} allowed `
+const COMPACT_LEAD = `${BRAND} allowed  `
 
 function compactLine(elements: Elements, { subject, more = '' }: Described, score: number, threshold: number, columns: number) {
   const { Text } = elements
   const segments = holdMeter(score, threshold, COMPACT_RISK_CELLS)
-  const bar = textWidth(segments) + 'risk ▕'.length + '▏'.length
+  const bar = 'risk '.length + textWidth(segments)
   const bound = ` < ${fixed(threshold)}`
   const spare = columns - COMPACT_LEAD.length - 2 - bar - ` ${fixed(score)}`.length - more.length
   const isBound = subject.length + bound.length <= spare
   const part = clip(subject, Math.max(1, spare))
   return (
     <Text>
-      <Text color={LOOKS.allowed.color}>{COMPACT_LEAD}</Text>
-      {`${part}${more}  `}
-      <Text dimColor>risk ▕</Text>
+      {brand(elements)}
+      <Text color={LOOKS.allowed.color}>{' allowed'}</Text>
+      {`  ${part}${more}  `}
+      <Text dimColor>risk </Text>
       {meterCells(elements, segments, 'success')}
-      <Text dimColor>▏</Text>
       {` ${fixed(score)}`}
       {isBound ? <Text dimColor>{bound}</Text> : null}
     </Text>
-  )
-}
-
-// The one-line form in a dim frame of its colour, so it stands apart from Claude's words around it; unframed where
-// the row is too narrow for one.
-function framedLine(elements: Elements, described: Described, columns: number) {
-  const { Box } = elements
-  const room = columns - CARD_CHROME
-  if (room < MIN_FRAMED_COLUMNS) return badgeLine(elements, described, columns)
-  return (
-    <Box borderStyle="round" borderColor={described.color} borderDimColor paddingX={1} alignSelf="flex-start">
-      {badgeLine(elements, described, room)}
-    </Box>
   )
 }
 
@@ -174,26 +150,22 @@ export function rowView(elements: Elements, described: Described, columns: numbe
   if (display === 'verbose' || described.weight === 'act') return inlineView(elements, described, columns, narrow)
   if (display === 'quiet' || described.weight === 'quiet') return null
   // The plain words go first when the row is short: a cut word reads worse than none.
-  const room = columns - CARD_CHROME >= MIN_FRAMED_COLUMNS ? columns - CARD_CHROME : columns
-  const fits = `${BRAND}  ${described.badge}  ${described.line}`.length <= room
-  return framedLine(elements, { ...described, headline: fits ? described.line : described.headline, detail: '' }, columns)
+  const fits = `${BRAND} ${described.badge}  ${described.line}`.length <= columns
+  return badgeLine(elements, { ...described, headline: fits ? described.line : described.headline, detail: '' }, columns)
 }
 
 // A card for a decision worth noticing, a compact line for an allowed command, the one-line form where the row is narrow.
 export function inlineView(elements: Elements, described: Described, columns: number, narrow: Described = described) {
-  if (columns < MIN_CARD_COLUMNS) return framedLine(elements, narrow, columns)
+  if (columns < MIN_CARD_COLUMNS) return badgeLine(elements, narrow, columns)
   const { inline } = described
   return inline.kind === 'card'
     ? card(elements, described, inline, columns)
     : compactLine(elements, described, inline.score, inline.threshold, columns)
 }
 
+// Each item behind a pixel in its app's color.
 function tallyText({ Text }: Elements, items: readonly TallyItem[]) {
-  return items.flatMap((item, index) => [
-    index === 0 ? '' : '  ',
-    <Text color={item.color}>{item.glyph}</Text>,
-    ` ${item.text}`,
-  ])
+  return items.flatMap((item, index) => [index === 0 ? '' : '  ', <Text color={item.color}>{TALLY_DOT}</Text>, ` ${item.text}`])
 }
 
 // The whole items that fit `columns`, after a lead of `used` columns.
@@ -213,7 +185,6 @@ const BAND_LEAD = `${BRAND}  `
 export type Offline = { notChecking: readonly App[]; holding: readonly App[] }
 
 const offlineItem = ({ notChecking, holding }: Offline): TallyItem => ({
-  glyph: APPS.off.glyph,
   color: 'warning',
   text: [
     'model offline',
@@ -222,36 +193,16 @@ const offlineItem = ({ notChecking, holding }: Offline): TallyItem => ({
   ].join(' · '),
 })
 
-// A frame takes the line above and below it.
-const FRAME_ROWS = 3
-
-// The tally above the prompt, in a dim frame so it reads apart from Claude's reply just above it; unframed where the
-// engine leaves fewer rows than a frame takes or the columns are too few.
-export function band(
-  elements: Elements,
-  list: readonly Decision[],
-  columns: number,
-  isOffline: boolean,
-  maxRows = FRAME_ROWS,
-  offline: Offline = { notChecking: [], holding: [] },
-) {
-  const { Box, Text } = elements
+// The tally above the prompt: the mark, then what vSR did, most urgent first.
+export function band(elements: Elements, list: readonly Decision[], columns: number, isOffline: boolean, offline: Offline = { notChecking: [], holding: [] }) {
+  const { Text } = elements
   const items = isOffline ? [offlineItem(offline), ...tallyOf(list)] : tallyOf(list)
-  const isFramed = maxRows >= FRAME_ROWS && columns - CARD_CHROME >= MIN_FRAMED_COLUMNS
-  const room = isFramed ? columns - CARD_CHROME : columns
-  const line = (
+  return (
     <Text wrap="truncate-end">
       {brand(elements)}
       {'  '}
-      {tallyText(elements, itemsWithin(items, room, BAND_LEAD.length))}
+      {tallyText(elements, itemsWithin(items, columns, BAND_LEAD.length))}
     </Text>
-  )
-  return isFramed ? (
-    <Box borderStyle="round" borderDimColor paddingX={1} alignSelf="flex-start">
-      {line}
-    </Box>
-  ) : (
-    line
   )
 }
 
@@ -447,13 +398,16 @@ export function dashboard(
       {hint ? <Text dimColor>{ANSWER_HINT}</Text> : null}
       {fitSections(sections, rows - wordmarkHeight(logo) - CONTROLS_HEIGHT - tallyRows - (hint ? Math.ceil(ANSWER_HINT.length / columns) : 0) - overviewHeight(about, columns)).map(({ section, count, entries }) => (
         <Box flexDirection="column">
-          <Text color={APPS[section].color} weight="bold">{`${APPS[section].glyph} ${APPS[section].name} · ${count}`}</Text>
-          {entries.map(({ decision, described: { badge, color, subject, more = '', headline, detail } }) => {
+          <Text>
+            <Text color={APPS[section].color}>{TALLY_DOT}</Text>
+            <Text weight="bold">{` ${APPS[section].name} · ${count}`}</Text>
+          </Text>
+          {entries.map(({ decision, described: { badge, color, subject, more = '', headline, detail, weight } }) => {
             const kind = labeling ? answersFor(decision) : undefined
             return (
               <Box flexDirection="column">
                 <Text>
-                  <Text backgroundColor={color} color="inverseText">{` ${badge} `}</Text>
+                  {weight === 'act' ? pill(elements, badge, color) : <Text color={color}>{` ${badge.toLowerCase()} `}</Text>}
                   {` ${clip(subject, Math.max(1, columns - badge.length - 3 - more.length))}${more}`}
                 </Text>
                 <Text>

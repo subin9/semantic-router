@@ -33,7 +33,7 @@ test('an answer that keeps to what the turn read is GROUNDED, judged against the
     request: PROMPT,
     answer: FAITHFUL,
   })
-  expect(await paneText($, /GROUNDED/, 100)).toBe(` GROUNDED  ${PROMPT}`)
+  expect(await paneText($, /^ grounded /, 100)).toBe(` grounded  ${PROMPT}`)
   expect(await paneText($, /answer matches/, 120)).toBe(
     'answer matches what Claude read this turn · unsupported 0.05 < 0.50 · checked against 1 file read this turn',
   )
@@ -45,7 +45,7 @@ test('an answer with claims the reads do not back is UNVERIFIED', { options: { c
 
   await turnThatReads($, INVENTED, 2)
 
-  expect(await paneText($, /UNVERIFIED/, 100)).toBe(` UNVERIFIED  ${PROMPT}`)
+  expect(await paneText($, /^ unverified /, 100)).toBe(` unverified  ${PROMPT}`)
   expect(await paneText($, /not backed/, 120)).toContain('unsupported 0.53 ≥ 0.50 · checked against 2 files read this turn')
 })
 
@@ -58,9 +58,9 @@ test('the check card is drawn under the last block of the answer it judged, and 
   const first = await rowTree($, assistantRow('The account was locked after five failed attempts.', true))
 
   expect(last.texts[0]).toBe(ENGINE_ROW)
-  expect(last.cards).toEqual([expect.objectContaining({ borderStyle: 'round', borderColor: 'warning', width: 76 })])
-  expect(last.texts).toContain('!  UNVERIFIED  some claims are not backed by what Claude read')
-  expect(last.texts).toContain('unsupported ▕████████████┃▊░░░░░░░░░░░▏  0.53  flags at 0.50')
+  expect(last.cards).toEqual([expect.objectContaining({ backgroundColor: 'warning' })])
+  expect(last.texts).toContain('▚▞ vSR  unverified  some claims are not backed by what Claude read')
+  expect(last.texts).toContain('unsupported ▐▐▐▐▐▐▐▐┃▐▐▐▐▐▐▐▐  0.53  flags at 0.50')
   expect(last.texts).toContain('look twice before you rely on it')
   expect(first.cards).toEqual([])
 })
@@ -72,10 +72,11 @@ test('a grounded answer draws a GROUNDED card with its meter in the success colo
 
   const { texts, props, cards } = await rowTree($, assistantRow('They ask for a callback and nothing else.'))
 
-  expect(cards).toEqual([expect.objectContaining({ borderColor: 'success' })])
-  expect(texts).toContain('✓  GROUNDED  answer matches what Claude read this turn')
+  expect(cards).toEqual([expect.objectContaining({ backgroundColor: 'success' })])
+  expect(texts).toContain('▚▞ vSR  grounded  answer matches what Claude read this turn')
   expect(texts).toContain('checked against 1 file read this turn')
-  expect(props[texts.indexOf('█▎')]).toMatchObject({ color: 'success' })
+  // 0.05 of 16 cells lights one.
+  expect(props[texts.indexOf('▐')]).toMatchObject({ color: 'success' })
 })
 
 test('a turn that read nothing, or answered in a few words, is not checked', async ($, on) => {
@@ -98,8 +99,8 @@ test('check fails open: with no answer from the classifier the turn ends as it w
   await turnThatReads($, INVENTED)
   const { texts } = await rowTree($, assistantRow('A refund of $40 was issued to the customer.'))
 
-  expect(texts).toContain('○  SKIPPED  answer not checked')
-  expect(await paneText($, /GROUNDED|UNVERIFIED/)).toBeUndefined()
+  expect(texts).toContain('▚▞ vSR  skipped  answer not checked')
+  expect(await paneText($, /^ (grounded|unverified) /)).toBeUndefined()
 })
 
 test('check is off unless turned on: a turn that read files asks nothing about its answer', async ($, on) => {
@@ -126,5 +127,5 @@ test('by default a grounded answer draws nothing under it, and an unbacked one d
   const unbacked = await rowTree($, assistantRow('A refund of $40 was issued to the customer.'))
 
   expect(grounded.texts).toEqual([ENGINE_ROW])
-  expect(unbacked.cards).toEqual([expect.objectContaining({ borderColor: 'warning' })])
+  expect(unbacked.cards).toEqual([expect.objectContaining({ backgroundColor: 'warning' })])
 })

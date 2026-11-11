@@ -25,7 +25,7 @@ test('a command the classifier flags is held, and the pane shows a HELD entry', 
   expect(verdict.reason).toBe(
     'vSR guard: "git push --force origin main" looks destructive (risk score 0.98 ≥ 0.90). Confirm before it runs.',
   )
-  expect(await paneText($, /HELD/)).toBe(' HELD  git push --force origin main')
+  expect(await paneText($, /^ held /)).toBe(' held  git push --force origin main')
   expect(await paneText($, /waiting for you/)).toContain('waiting for you · looks destructive · risk score 0.98 ≥ 0.90')
 })
 
@@ -35,7 +35,7 @@ test('a command under the threshold passes through what the chain answers, and s
   const verdict = await $.tool.check({ tool: 'Bash', input: { command: 'git push origin main' } })
 
   expect(verdict).toEqual(BOTTOM)
-  expect(await paneText($, /ALLOWED/)).toBe(' ALLOWED  git push origin main')
+  expect(await paneText($, /^ allowed /)).toBe(' allowed  git push origin main')
   expect(await paneText($, /ran normally/)).toBe('ran normally, not risky enough to hold · risk score 0.20 < 0.90')
 })
 
@@ -53,7 +53,7 @@ test('a classifier that fails leaves the permission flow alone and shows SKIPPED
   const verdict = await $.tool.check({ tool: 'Bash', input: { command: 'git push --force origin main' } })
 
   expect(verdict).toEqual(BOTTOM)
-  expect(await paneText($, /SKIPPED/)).toBe(' SKIPPED  git push --force origin main')
+  expect(await paneText($, /^ skipped /)).toBe(' skipped  git push --force origin main')
   expect(await paneText($, /ran unchecked/)).toBe('command ran unchecked · could not reach the decision model (connection refused) · /vsr:setup checks it')
 })
 
@@ -64,7 +64,7 @@ test('a classifier that never answers is given up on after the wait, and the com
   await clock.advance(3000)
 
   expect(await pending).toEqual(BOTTOM)
-  expect(await paneText($, /SKIPPED/)).toBe(' SKIPPED  git push --force origin main')
+  expect(await paneText($, /^ skipped /)).toBe(' skipped  git push --force origin main')
   expect(await paneText($, /ran unchecked/)).toBe('command ran unchecked · the decision model took over 3 s · /vsr:setup checks it')
 })
 
@@ -75,7 +75,7 @@ test('a guard waiting until done holds a command the classifier never answered o
   await clock.advance(60_000)
 
   expect(await pending).toMatchObject({ decision: 'ask', reason: 'vSR guard: could not check 1 of 1 step: the decision model took over 60 s. Confirm before it runs.' })
-  expect(await paneText($, /HELD/)).toBe(' HELD  ls')
+  expect(await paneText($, /^ held /)).toBe(' held  ls')
 })
 
 test('a fixed rule still holds while the classifier is slow', async ($, on) => {
@@ -96,7 +96,7 @@ test('a held command stays in view in the pane after a run of allowed ones', asy
 
   const lines = await paneLines($, { columns: 100, rows: 30 })
 
-  expect(lines).toContain(' HELD  git push --force origin main')
+  expect(lines).toContain(' held  git push --force origin main')
 })
 
 test('a held command the person lets run shows APPROVED', async ($, on) => {
@@ -106,7 +106,7 @@ test('a held command the person lets run shows APPROVED', async ($, on) => {
 
   await $.tool.call(PUSH)
 
-  expect(await paneText($, /APPROVED/)).toBe(' APPROVED  git push --force origin main')
+  expect(await paneText($, /^ approved /)).toBe(' approved  git push --force origin main')
   expect(await paneText($, /you let it run/)).toBe('you let it run · looks destructive · risk score 0.98 ≥ 0.90')
 })
 
@@ -127,7 +127,7 @@ test('a held command the person says no to shows DECLINED', async ($, on) => {
 
   await $.tool.call(PUSH)
 
-  expect(await paneText($, /DECLINED/)).toBe(' DECLINED  git push --force origin main')
+  expect(await paneText($, /^ declined /)).toBe(' declined  git push --force origin main')
 })
 
 test('a held command that ran and failed still shows APPROVED', async ($, on) => {
@@ -137,7 +137,7 @@ test('a held command that ran and failed still shows APPROVED', async ($, on) =>
 
   await $.tool.call(PUSH)
 
-  expect(await paneText($, /APPROVED/)).toBe(' APPROVED  git push --force origin main')
+  expect(await paneText($, /^ approved /)).toBe(' approved  git push --force origin main')
 })
 
 test('a held command whose call rejects shows DECLINED, and the error still propagates', async ($, on) => {
@@ -146,7 +146,7 @@ test('a held command whose call rejects shows DECLINED, and the error still prop
 
   await expect($.tool.call(PUSH)).rejects.toThrow('no implementation for tool.call')
 
-  expect(await paneText($, /DECLINED/)).toBe(' DECLINED  git push --force origin main')
+  expect(await paneText($, /^ declined /)).toBe(' declined  git push --force origin main')
 })
 
 test('a held command waits for you until the call settles', async ($, on) => {
@@ -157,11 +157,11 @@ test('a held command waits for you until the call settles', async ($, on) => {
 
   const pending = $.tool.call(PUSH)
   await clock.advance(1)
-  expect(await paneText($, /HELD/)).toBe(' HELD  git push --force origin main')
+  expect(await paneText($, /^ held /)).toBe(' held  git push --force origin main')
   settle()
   await pending
 
-  expect(await paneText($, /APPROVED/)).toBe(' APPROVED  git push --force origin main')
+  expect(await paneText($, /^ approved /)).toBe(' approved  git push --force origin main')
 })
 
 test('a command that is only allowed gets no outcome', async ($, on) => {
@@ -170,8 +170,8 @@ test('a command that is only allowed gets no outcome', async ($, on) => {
 
   await $.tool.call({ ...PUSH, command: 'git push origin main' })
 
-  expect(await paneText($, /ALLOWED/)).toBe(' ALLOWED  git push origin main')
-  expect(await paneText($, /APPROVED|DECLINED|HELD/)).toBeUndefined()
+  expect(await paneText($, /^ allowed /)).toBe(' allowed  git push origin main')
+  expect(await paneText($, /^ (approved|declined|held) /)).toBeUndefined()
 })
 
 test('partsOf splits a chain on && || and ;, and trims the parts', () => {
@@ -260,7 +260,7 @@ test('a chain where one part scores high is held on that part, and the pane name
   expect(questioned).toEqual([`Tool: Bash\nCommand: ${DELETE}`])
   expect(verdict.decision).toBe('ask')
   expect(verdict.reason).toBe(`vSR guard: "${DELETE}" looks destructive (risk score 0.96 ≥ 0.90). Confirm before it runs.`)
-  expect(await paneText($, /HELD/, 80)).toBe(` HELD  ${DELETE} (+2 steps)`)
+  expect(await paneText($, /^ held /, 80)).toBe(` held  ${DELETE} (+2 steps)`)
   expect(await paneText($, /waiting for you/)).toContain('risk score 0.96 ≥ 0.90')
 })
 
@@ -270,7 +270,7 @@ test('a chain with no risky part is allowed, and the pane shows its riskiest par
   const verdict = await $.tool.check({ tool: 'Bash', input: { command: `${BRANCHES} && ${FETCH}` } })
 
   expect(verdict).toEqual(BOTTOM)
-  expect(await paneText($, /ALLOWED/)).toBe(` ALLOWED  ${FETCH} (+1 step)`)
+  expect(await paneText($, /^ allowed /)).toBe(` allowed  ${FETCH} (+1 step)`)
   expect(await paneText($, /ran normally/)).toContain('risk score 0.42 < 0.90 · riskiest of 2 steps')
 })
 
@@ -287,10 +287,10 @@ test('the pane keeps (+N steps) when the row is too narrow for the part', async 
   engine(on, { review: 0.1, parts: { [DELETE]: 0.96 } })
   await $.tool.check({ tool: 'Bash', input: { command: CHAIN } })
 
-  const label = await paneText($, /HELD/, 40)
+  const label = await paneText($, /^ held /, 40)
 
   expect(label).toHaveLength(40)
-  expect(label).toMatch(/^ HELD  git push .*… \(\+2 steps\)$/)
+  expect(label).toMatch(/^ held  git push .*… \(\+2 steps\)$/)
 })
 
 test('a chain where one part fails and none reach the threshold shows SKIPPED and leaves the permission flow alone', async ($, on) => {
@@ -299,8 +299,8 @@ test('a chain where one part fails and none reach the threshold shows SKIPPED an
   const verdict = await $.tool.check({ tool: 'Bash', input: { command: CHAIN } })
 
   expect(verdict).toEqual(BOTTOM)
-  expect(await paneText($, /SKIPPED/, 120)).toBe(` SKIPPED  ${CHAIN}`)
-  expect(await paneText($, /HELD|ALLOWED/)).toBeUndefined()
+  expect(await paneText($, /^ skipped /, 120)).toBe(` skipped  ${CHAIN}`)
+  expect(await paneText($, /^ (held|allowed) /)).toBeUndefined()
 })
 
 test('a chain where one part fails but another reaches the threshold is still held', async ($, on) => {
@@ -309,8 +309,8 @@ test('a chain where one part fails but another reaches the threshold is still he
   const verdict = await $.tool.check({ tool: 'Bash', input: { command: CHAIN } })
 
   expect(verdict.decision).toBe('ask')
-  expect(await paneText($, /HELD/, 80)).toBe(` HELD  ${DELETE} (+2 steps)`)
-  expect(await paneText($, /SKIPPED/)).toBeUndefined()
+  expect(await paneText($, /^ held /, 80)).toBe(` held  ${DELETE} (+2 steps)`)
+  expect(await paneText($, /^ skipped /)).toBeUndefined()
 })
 
 test('a chain held on one part still shows DECLINED when the person says no', async ($, on) => {
@@ -320,7 +320,7 @@ test('a chain held on one part still shows DECLINED when the person says no', as
 
   await $.tool.call({ ...PUSH, command: CHAIN })
 
-  expect(await paneText($, /DECLINED/, 80)).toBe(` DECLINED  ${DELETE} (+2 steps)`)
+  expect(await paneText($, /^ declined /, 80)).toBe(` declined  ${DELETE} (+2 steps)`)
 })
 
 test('alwaysHeld names the catastrophic commands, and leaves ordinary ones alone', () => {
@@ -534,7 +534,7 @@ test('a guard waiting until done holds a command whose answer was an error, and 
 
   expect(verdict.decision).toBe('ask')
   expect(verdict.reason).toBe('vSR guard: could not check 1 of 1 step: the decision model answered with an error (HTTP 500). Confirm before it runs.')
-  expect(await paneText($, /HELD/)).toBe(' HELD  git push --force origin main')
+  expect(await paneText($, /^ held /)).toBe(' held  git push --force origin main')
   expect(await paneText($, /waiting for you/)).toContain('1 of 1 step not checked · no step was scored')
 })
 

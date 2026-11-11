@@ -42,12 +42,12 @@ test('a prompt that says the last answer was wrong tells Claude to re-check it, 
 
   expect(started.model).toBe('opus')
   expect(reply.contexts).toEqual([[NOTE]])
-  expect(await paneText($, /ESCALATED/, 100)).toBe(` ESCALATED  ${PUSHBACK}`)
+  expect(await paneText($, /^ escalated /, 100)).toBe(` escalated  ${PUSHBACK}`)
   expect(await paneText($, /subagent → Opus/, 120)).toBe(
     'subagent → Opus, xhigh effort · multi-step task · difficulty 0.90 of 2 · confidence 0.80 · reasoning steps 0.20 · one level up → xhigh · escalated, router alone would pick Sonnet',
   )
   const { texts } = await rowTree($, agentRow('call-1'))
-  expect(texts).toContain('⇢  ROUTED  subagent → Opus · xhigh effort')
+  expect(texts).toContain('▚▞ vSR  routed  subagent → Opus · xhigh effort')
   expect(texts).toContain('escalated: you pushed back · router alone would pick Sonnet')
 })
 
@@ -62,7 +62,7 @@ test('an escalated subagent takes the steps rule on Opus, one level up: many ste
   const { texts } = await rowTree($, agentRow('call-1'))
 
   expect(started.model).toBe('opus')
-  expect(texts).toContain('⇢  ROUTED  subagent → Opus · max effort')
+  expect(texts).toContain('▚▞ vSR  routed  subagent → Opus · max effort')
   expect(await paneText($, /subagent → Opus/, 160)).toContain('steps 1.33 · one level up → max · escalated, router alone would pick Sonnet')
 })
 
@@ -76,7 +76,7 @@ test('an escalated subagent whose steps answer is unsure goes one level above th
   await firstStepOf($, 'agent-call-1')
   const { texts } = await rowTree($, agentRow('call-1'))
 
-  expect(texts).toContain('⇢  ROUTED  subagent → Opus · xhigh effort')
+  expect(texts).toContain('▚▞ vSR  routed  subagent → Opus · xhigh effort')
   expect(await paneText($, /subagent → Opus/, 160)).toContain('steps 0.10 · one level up → xhigh · escalated, router alone would keep the default model')
 })
 
@@ -89,7 +89,7 @@ test('an escalated subagent keeps a higher effort it would have had', { options:
   await $.agent.spawn(SPAWN)
   for await (const _ of $.turn.step({ turnId: 's1', index: 0, model: 'opus', effort: 'max', messageCount: 1, agentId: 'agent-call-1' })) void _
 
-  expect((await rowTree($, agentRow('call-1'))).texts).toContain('⇢  ROUTED  subagent → Opus · max effort')
+  expect((await rowTree($, agentRow('call-1'))).texts).toContain('▚▞ vSR  routed  subagent → Opus · max effort')
 })
 
 test('an escalated subagent still goes one step up when the classifier fails, to Opus at xhigh', async ($, on) => {
@@ -121,7 +121,7 @@ test('a satisfied prompt escalates nothing, and its subagent keeps the router pi
 
   expect(started.model).toBe('sonnet')
   expect(reply.contexts).toEqual([undefined])
-  expect(await paneText($, /ESCALATED|escalated/)).toBeUndefined()
+  expect(await paneText($, /escalated/)).toBeUndefined()
 })
 
 test('the escalation ends with the turn that answers the pushback', async ($, on) => {
@@ -159,9 +159,8 @@ test('the ESCALATED card is drawn under the prompt it judged, and no other', { o
   const { texts, cards } = await rowTree($, userRow(PUSHBACK))
   const other = await rowTree($, userRow(THANKS))
 
-  expect(cards).toEqual([expect.objectContaining({ borderStyle: 'round', borderColor: 'claude', paddingX: 1, width: 76 })])
-  expect(texts).toContain('↑  ESCALATED  you pushed back · next subagent one step up')
-  expect(texts).toContain(' vSR  · escalate')
+  expect(cards).toEqual([expect.objectContaining({ backgroundColor: 'claude' })])
+  expect(texts).toContain('▚▞ vSR  escalated  you pushed back · next subagent one step up')
   expect(texts).toContain('said it was wrong 0.92')
   expect(texts).toContain('told Claude to re-check its last answer')
   expect(other.cards).toEqual([])
@@ -178,6 +177,6 @@ test('a classifier that fails escalates nothing and shows SKIPPED under the prom
 
   expect(started.model).toBe('opus')
   expect(reply.contexts).toEqual([undefined])
-  expect(cards).toEqual([expect.objectContaining({ borderColor: 'inactive' })])
-  expect(texts).toContain('○  SKIPPED  pushback not checked')
+  expect(cards).toEqual([expect.objectContaining({ backgroundColor: 'inactive' })])
+  expect(texts).toContain('▚▞ vSR  skipped  pushback not checked')
 })

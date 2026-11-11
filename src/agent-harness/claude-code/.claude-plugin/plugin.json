@@ -217,7 +217,7 @@
     "logo": {
       "type": "string",
       "title": "Logo",
-      "description": "The vLLM Semantic Router mark, the yellow and blue V, beside each vSR card and at the top of the /vsr pane. auto draws the picture in kitty, Ghostty and iTerm2 3.5 or later outside tmux; elsewhere it draws the V in characters, smooth ones (diagonal wedges) in VS Code 1.108+, GNOME Terminal and other VTE 0.60+ terminals, Konsole 22.04+ and foot, and block elements in the rest. image asks for the picture; smooth and blocks pick the characters (smooth suits Windows Terminal 1.25+); off leaves it out.",
+      "description": "The vLLM Semantic Router mark, the yellow and blue V, at the top of the /vsr pane (each vSR line starts with a small V in two block characters whatever this is). auto draws the picture in kitty, Ghostty and iTerm2 3.5 or later outside tmux; elsewhere it draws the V in characters, smooth ones (diagonal wedges) in VS Code 1.108+, GNOME Terminal and other VTE 0.60+ terminals, Konsole 22.04+ and foot, and block elements in the rest. image asks for the picture; smooth and blocks pick the characters (smooth suits Windows Terminal 1.25+); off leaves it out.",
       "default": "auto",
       "options": [
         "auto",

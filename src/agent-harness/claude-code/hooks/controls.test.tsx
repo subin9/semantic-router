@@ -172,7 +172,7 @@ test('the controls sit under the logo and above the tally once there are decisio
   await ui.unmount()
 
   expect(lines.indexOf('vLLM Semantic Router')).toBeLessThan(lines.indexOf('apps          '))
-  expect(lines.indexOf('guard waits   ')).toBeLessThan(lines.indexOf('› 1 allowed'))
+  expect(lines.indexOf('guard waits   ')).toBeLessThan(lines.indexOf('▪ 1 allowed'))
 })
 
 test('pressing a toggle turns its app on or off through /config, under vSR\'s own key', async ($, on) => {
@@ -312,10 +312,10 @@ test('redact waiting until done withholds an output the classifier never answere
 
   expect(early).toBe(false)
   expect(ran.deny).toBe(WITHHELD_REDACT('the decision model took over 60 s'))
-  expect(cards).toEqual([expect.objectContaining({ borderColor: 'warning' })])
-  expect(texts.some(text => text.startsWith('⊘  WITHHELD  support/ticket-1042.txt withheld from Claude: not checked'))).toBe(true)
-  expect(await paneText($, /WITHHELD/)).toBe(' WITHHELD  support/ticket-1042.txt')
-  expect(await paneText($, /withheld\)?$/)).toBe('⊘ 1 withheld')
+  expect(cards).toEqual([expect.objectContaining({ backgroundColor: 'warning' })])
+  expect(texts.some(text => text.startsWith('▚▞ vSR  withheld  support/ticket-1042.txt withheld from Claude: not checked'))).toBe(true)
+  expect(await paneText($, /^ withheld /)).toBe(' withheld  support/ticket-1042.txt')
+  expect(await paneText($, /withheld\)?$/)).toBe('▪ 1 withheld')
   expect(logLines(reply)).toEqual([expect.objectContaining({ app: 'redact', verdict: 'off', learnable: false, detail: { why: 'the decision model took over 60 s' } })])
 })
 
@@ -362,7 +362,7 @@ test('a redact request cancelled with its call is not withheld and records nothi
 
   expect(ran.deny).toBeUndefined()
   expect(contentOf(ran)).toBe('API_TOKEN=[vsr:secret]')
-  expect(await paneText($, /WITHHELD|SKIPPED/)).toBeUndefined()
+  expect(await paneText($, /^ (withheld|skipped) /)).toBeUndefined()
   expect(logLines(reply).filter(line => line.verdict === 'off')).toEqual([])
 })
 
@@ -384,7 +384,7 @@ test('guard waiting until done holds a command while the runtime is offline', { 
   const verdict = await $.tool.check({ tool: 'Bash', input: { command: 'ls' } })
 
   expect(verdict).toMatchObject({ decision: 'ask', reason: 'vSR guard: could not check 1 of 1 step: could not reach the decision model (connection refused). Confirm before it runs.' })
-  expect(await paneText($, /HELD/)).toBe(' HELD  ls')
+  expect(await paneText($, /^ held /)).toBe(' held  ls')
 })
 
 test('guard with its default wait steps aside while the runtime is offline', async ($, on) => {
@@ -393,7 +393,7 @@ test('guard with its default wait steps aside while the runtime is offline', asy
   const verdict = await $.tool.check({ tool: 'Bash', input: { command: 'ls' } })
 
   expect(verdict.decision).toBe('allow')
-  expect(await paneText($, /SKIPPED/)).toBe(' SKIPPED  ls')
+  expect(await paneText($, /^ skipped /)).toBe(' skipped  ls')
 })
 
 test('offline, the band names the apps that hold instead of stepping aside', { options: { redactWait: 'done', guardWait: 'done' } }, async ($, on) => {
@@ -404,5 +404,5 @@ test('offline, the band names the apps that hold instead of stepping aside', { o
   await clock.advance(0)
   const { texts } = await rowTree($, bandRow(120))
 
-  expect(texts[0]).toBe(' vSR   ○ model offline · shield not checking · guard, redact holding')
+  expect(texts[0]).toBe('▚▞ vSR  ▪ model offline · shield not checking · guard, redact holding')
 })

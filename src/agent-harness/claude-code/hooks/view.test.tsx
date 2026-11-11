@@ -36,12 +36,14 @@ test('a Bash row with an allowed decision keeps the engine row and adds one comp
   on('tool.call', () => ({ result: { stdout: 'ok' } }))
   await $.tool.call({ ...PUSH, command: 'git push origin main', tool_use_id: 'call-3' })
 
-  const { texts, cards } = await rowTree($, toolRow(callOf('call-3', 'git push origin main')))
+  const { texts, props, cards } = await rowTree($, toolRow(callOf('call-3', 'git push origin main')))
 
   expect(texts[0]).toBe(ENGINE_ROW)
-  expect(texts.filter(text => /^› allowed \S/.test(text))).toEqual([
-    '› allowed git push origin main  risk ▕█████████▏░┃░▏ 0.76 < 0.90',
+  expect(texts.filter(text => /^▚▞ vSR allowed  \S/.test(text))).toEqual([
+    '▚▞ vSR allowed  git push origin main  risk ▐▐▐▐▐▐▐▐▐▐▐┃▐ 0.76 < 0.90',
   ])
+  // 0.76 lights 9 of the 12 cells.
+  expect(props[texts.indexOf('▐▐▐▐▐▐▐▐▐')]).toMatchObject({ color: 'success' })
   expect(cards).toEqual([])
 })
 
@@ -61,12 +63,15 @@ test('a held then declined call draws a DECLINED card with the part, the risk me
   on('tool.call', () => ({ result: { stdout: '' } }))
   await $.tool.call(PUSH)
 
-  const { texts, cards } = await rowTree($, toolRow(callOf('call-9', PUSH.command)))
+  const { texts, props, cards } = await rowTree($, toolRow(callOf('call-9', PUSH.command)))
 
   expect(texts[0]).toBe(ENGINE_ROW)
-  expect(cards).toEqual([expect.objectContaining({ borderStyle: 'round', borderColor: 'error', paddingX: 1, width: 76 })])
-  expect(texts).toContain('✕  DECLINED  git push --force origin main')
-  expect(texts).toContain('risk ▕██████████████████████┃█▌▏  0.98  holds at 0.90')
+  expect(cards).toEqual([expect.objectContaining({ backgroundColor: 'error' })])
+  expect(texts).toContain('▚▞ vSR  declined  git push --force origin main')
+  expect(texts).toContain('risk ▐▐▐▐▐▐▐▐▐▐▐▐▐▐┃▐▐  0.98  holds at 0.90')
+  // 0.98 lights all 16 cells, on both sides of the hold line.
+  expect(props[texts.indexOf('▐▐▐▐▐▐▐▐▐▐▐▐▐▐')]).toMatchObject({ color: 'error' })
+  expect(props[texts.indexOf('▐▐')]).toMatchObject({ color: 'error' })
   expect(texts).toContain('you said no · looks destructive')
 })
 
@@ -79,8 +84,8 @@ test('a held call that is still waiting draws a HELD card with the part', async 
 
   const { texts, cards } = await rowTree($, toolRow(callOf('call-9', PUSH.command)))
 
-  expect(cards).toEqual([expect.objectContaining({ borderStyle: 'round', borderColor: 'warning' })])
-  expect(texts).toContain('‖  HELD  git push --force origin main')
+  expect(cards).toEqual([expect.objectContaining({ backgroundColor: 'warning' })])
+  expect(texts).toContain('▚▞ vSR  held  git push --force origin main')
   expect(texts).toContain('waiting for you · looks destructive')
 })
 
@@ -92,8 +97,8 @@ test('a held call the person let run draws an APPROVED card', async ($, on) => {
 
   const { texts, cards } = await rowTree($, toolRow(callOf('call-9', PUSH.command)))
 
-  expect(cards).toEqual([expect.objectContaining({ borderColor: 'permission' })])
-  expect(texts).toContain('✓  APPROVED  git push --force origin main')
+  expect(cards).toEqual([expect.objectContaining({ backgroundColor: 'permission' })])
+  expect(texts).toContain('▚▞ vSR  approved  git push --force origin main')
   expect(texts).toContain('you let it run · looks destructive')
 })
 
@@ -103,8 +108,8 @@ test('a chain held on one part draws the part and its step count in the card tit
 
   const { texts } = await rowTree($, toolRow(callOf('call-9', CHAIN)))
 
-  expect(texts).toContain(`‖  HELD  ${DELETE} (+2 steps)`)
-  expect(texts).toContain('risk ▕██████████████████████┃█░▏  0.96  holds at 0.90')
+  expect(texts).toContain(`▚▞ vSR  held  ${DELETE} (+2 steps)`)
+  expect(texts).toContain('risk ▐▐▐▐▐▐▐▐▐▐▐▐▐▐┃▐▐  0.96  holds at 0.90')
 })
 
 test('the compact line gives up its bound, then clips the command, as the row narrows', { options: { display: 'verbose' } }, async ($, on) => {
@@ -113,14 +118,14 @@ test('the compact line gives up its bound, then clips the command, as the row na
   await $.tool.call({ ...PUSH, command: 'git push origin main', tool_use_id: 'call-3' })
   const row = callOf('call-3', 'git push origin main')
   const compact = async (columns: number) =>
-    (await rowTree($, toolRow(row, columns))).texts.find(text => /^› allowed \S/.test(text))
+    (await rowTree($, toolRow(row, columns))).texts.find(text => /^▚▞ vSR allowed  \S/.test(text))
 
-  expect(await compact(80)).toBe('› allowed git push origin main  risk ▕█████████▏░┃░▏ 0.76 < 0.90')
-  expect(await compact(66)).toBe('› allowed git push origin main  risk ▕█████████▏░┃░▏ 0.76')
-  expect(await compact(60)).toBe('› allowed git push origin ma…  risk ▕█████████▏░┃░▏ 0.76')
+  expect(await compact(80)).toBe('▚▞ vSR allowed  git push origin main  risk ▐▐▐▐▐▐▐▐▐▐▐┃▐ 0.76 < 0.90')
+  expect(await compact(66)).toBe('▚▞ vSR allowed  git push origin main  risk ▐▐▐▐▐▐▐▐▐▐▐┃▐ 0.76')
+  expect(await compact(60)).toBe('▚▞ vSR allowed  git push origi…  risk ▐▐▐▐▐▐▐▐▐▐▐┃▐ 0.76')
 })
 
-test('a card on the narrowest row drops the caption and the score text before the meter', { options: { display: 'verbose' } }, async ($, on) => {
+test('a card on the narrowest row drops the caption before the meter', { options: { display: 'verbose' } }, async ($, on) => {
   engine(on, { review: 0.98, complexity: { score: 1.61, confidence: 0.8 } })
   on('agent.spawn', (_, e) => ({ model: e.model ?? e.parentModel, agentId: 'agent-1' }))
   on('classic.PermissionRequest', () => NO)
@@ -131,9 +136,10 @@ test('a card on the narrowest row drops the caption and the score text before th
   const risk = await rowTree($, toolRow(callOf('call-9', PUSH.command), 60))
   const route = await rowTree($, agentRow('call-1', 60))
 
-  expect(risk.cards).toEqual([expect.objectContaining({ width: 52 })])
-  expect(risk.texts).toContain('risk ▕██████████████████████┃█▌▏  0.98')
-  expect(route.texts).toContain('easy ▕██████│████████████│█▍░░░░▏ hard  1.61')
+  // The card takes the row's 56 columns, and its lines 49 of them: room for the risk caption, not the task word.
+  expect(risk.cards).toEqual([expect.objectContaining({ backgroundColor: 'error' })])
+  expect(risk.texts).toContain('risk ▐▐▐▐▐▐▐▐▐▐▐▐▐▐┃▐▐  0.98  holds at 0.90')
+  expect(route.texts).toContain('easy ▐▐▐▐│▐▐▐▐▐▐▐▐│▐▐▐▐ hard  1.61 of 2')
 })
 
 test('at 50 columns every kind falls back to the one-line form', { options: { display: 'verbose' } }, async ($, on) => {
@@ -166,8 +172,8 @@ test('at 50 columns every kind falls back to the one-line form', { options: { di
   }
 
   expect(seen.map(lines => lines.length)).toEqual([1, 1, 1, 1, 1])
-  expect(seen.map(([line]) => line.split(/ {2,}/)[1])).toEqual(['ROUTED', 'KEPT', 'ALLOWED', 'DECLINED', 'SKIPPED'])
-  expect(seen[2][0]).toBe(' vSR   ALLOWED  ran normally, not risky e…')
+  expect(seen.map(([line]) => line.split(/ {2,}/)[0])).toEqual(['▚▞ vSR routed', '▚▞ vSR kept', '▚▞ vSR allowed', '▚▞ vSR declined', '▚▞ vSR skipped'])
+  expect(seen[2][0]).toBe('▚▞ vSR allowed  ran normally, not risky enoug…')
 })
 
 test('a folded group keeps its line and adds a card for the declined call and a compact line for the allowed one', { options: { display: 'verbose' } }, async ($, on) => {
@@ -183,10 +189,10 @@ test('a folded group keeps its line and adds a card for the declined call and a 
   const { texts, cards } = await rowTree($, groupRow(calls, false))
 
   expect(texts[0]).toBe(ENGINE_ROW)
-  expect(cards).toEqual([expect.objectContaining({ borderStyle: 'round', borderColor: 'error' })])
-  expect(texts.filter(text => text.startsWith('✕  DECLINED'))).toEqual(['✕  DECLINED  git push --force origin main'])
-  expect(texts.filter(text => /^› allowed \S/.test(text))).toEqual([
-    '› allowed git status  risk ▕██▍░░░░░░░░┃░▏ 0.20 < 0.90',
+  expect(cards).toEqual([expect.objectContaining({ backgroundColor: 'error' })])
+  expect(texts.filter(text => text.startsWith('▚▞ vSR  declined'))).toEqual(['▚▞ vSR  declined  git push --force origin main'])
+  expect(texts.filter(text => /^▚▞ vSR allowed  \S/.test(text))).toEqual([
+    '▚▞ vSR allowed  git status  risk ▐▐▐▐▐▐▐▐▐▐▐┃▐ 0.20 < 0.90',
   ])
 })
 
@@ -235,20 +241,20 @@ test('the tally counts each kind the session decided, and splits the held ones',
   reply.fails = true
   await check('git push --force origin dev')
 
-  expect(await paneText($, /routed/)).toBe('‖ 2 held (1 declined, 1 approved)  ⇢ 2 routed  ≈ 1 kept  › 3 allowed')
+  expect(await paneText($, /routed/)).toBe('▪ 2 held (1 declined, 1 approved)  ▪ 2 routed  ▪ 1 kept  ▪ 3 allowed')
 })
 
-test('the tally colours each glyph in its app colour and leaves out what did not happen', async ($, on) => {
+test('the tally colours the dot of each item in its app colour and leaves out what did not happen', async ($, on) => {
   engine(on, { review: 0.2 })
   await $.tool.check({ tool: 'Bash', input: { command: 'ls' } })
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  const glyph = (await ui.findAll({ type: 'Text' })).find(row => row.text === '›')
+  const dot = (await ui.findAll({ type: 'Text' })).find(row => row.text === '▪')
   const tally = afterLogo((await ui.findAll({ type: 'Text' })).map(row => row.text ?? ''))[0]
   await ui.unmount()
 
-  expect(glyph?.props).toMatchObject({ color: 'success' })
-  expect(tally).toBe('› 1 allowed')
+  expect(dot?.props).toMatchObject({ color: 'success' })
+  expect(tally).toBe('▪ 1 allowed')
 })
 
 test('the tally and the newest decisions fit the rows the pane is given', { options: { check: true } }, async ($, on) => {
@@ -260,9 +266,9 @@ test('the tally and the newest decisions fit the rows the pane is given', { opti
   const lines = await paneLines($, { columns: 60, rows: 35 })
 
   expect(lines).toContain(ANSWER_HINT)
-  expect(lines.filter(text => text.startsWith(' ALLOWED  git')).length).toBe(2)
-  expect(afterLogo(lines)[0]).toBe('› 8 allowed')
-  expect(lines.join('\n')).toContain(' ALLOWED  git push origin b8')
+  expect(lines.filter(text => text.startsWith(' allowed  git')).length).toBe(2)
+  expect(afterLogo(lines)[0]).toBe('▪ 8 allowed')
+  expect(lines.join('\n')).toContain(' allowed  git push origin b8')
 })
 
 test('the pane starts empty', async ($, on) => {
@@ -290,36 +296,35 @@ async function severalApps($: Parameters<Parameters<typeof test>[1]>[0], on: Par
   await $.tool.check({ tool: 'Bash', input: { command: 'ls' } })
 }
 
-test('the band shows vSR as a capsule, v white, S yellow and R blue, then one item per app that decided, each glyph in its app colour', async ($, on) => {
+test('the band shows the ▚▞ vSR mark, ▚ yellow and ▞ blue, then one item per app that decided, each dot in its app colour', async ($, on) => {
   await severalApps($, on)
 
   const { texts, props } = await rowTree($, bandRow())
 
-  expect(texts[0]).toBe(' vSR   ◆ 1 shielded  ▒ 2 hidden  ⇢ 1 routed  › 1 allowed')
-  expect(['v', 'S', 'R'].map(letter => props[texts.indexOf(letter)]?.color)).toEqual(['#ffffff', '#fdb618', '#32a3ff'])
-  expect(props[texts.indexOf('v')]).toMatchObject({ backgroundColor: '#2d333f' })
-  expect(props[texts.indexOf('⇢')]).toMatchObject({ color: 'suggestion' })
-  expect(props[texts.indexOf('▒')]).toMatchObject({ color: 'merged' })
-  expect(props[texts.indexOf('◆')]).toMatchObject({ color: 'warning' })
+  expect(texts[0]).toBe('▚▞ vSR  ▪ 1 shielded  ▪ 2 hidden  ▪ 1 routed  ▪ 1 allowed')
+  expect(['▚', '▞'].map(cell => props[texts.indexOf(cell)]?.color)).toEqual(['#fdb618', '#32a3ff'])
+  expect(props[texts.indexOf(' vSR')]).toMatchObject({ dimColor: true })
+  expect(texts.flatMap((text, index) => (text === '▪' ? [props[index].color] : []))).toEqual(['warning', 'merged', 'suggestion', 'success'])
 })
 
-test('the band sits in a dim frame, so it reads apart from the reply above it', async ($, on) => {
+// The boxes on a surface that draw a border.
+async function bordersIn($: Test, target: object) {
+  const ui = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', viewport: { columns: 100, rows: 30 }, ...target } as never)
+  const boxes = (await ui.findAll({ type: 'Box' })).map(row => row.props as Record<string, unknown>).filter(box => box.borderStyle !== undefined)
+  await ui.unmount()
+  return boxes
+}
+
+test('the band is one line with no frame, whatever rows the engine leaves it', async ($, on) => {
   await severalApps($, on)
 
-  const { texts, frames, cards } = await rowTree($, bandRow())
+  for (const maxRows of [1, 3, 10]) {
+    const { texts, cards } = await rowTree($, bandRow(100, maxRows))
 
-  expect(cards).toEqual([])
-  expect(frames).toEqual([expect.objectContaining({ borderStyle: 'round', borderDimColor: true })])
-  expect(texts[0]).toBe(' vSR   ◆ 1 shielded  ▒ 2 hidden  ⇢ 1 routed  › 1 allowed')
-})
-
-test('the band drops its frame where the engine leaves it one row', async ($, on) => {
-  await severalApps($, on)
-
-  const { texts, frames } = await rowTree($, bandRow(100, 1))
-
-  expect(frames).toEqual([])
-  expect(texts[0]).toBe(' vSR   ◆ 1 shielded  ▒ 2 hidden  ⇢ 1 routed  › 1 allowed')
+    expect(cards).toEqual([])
+    expect(vsrLines(texts)).toEqual(['▚▞ vSR  ▪ 1 shielded  ▪ 2 hidden  ▪ 1 routed  ▪ 1 allowed'])
+    expect(await bordersIn($, bandRow(100, maxRows))).toEqual([])
+  }
 })
 
 test('the band keeps to whole items within its columns', async ($, on) => {
@@ -327,7 +332,7 @@ test('the band keeps to whole items within its columns', async ($, on) => {
 
   const { texts } = await rowTree($, bandRow(36))
 
-  expect(texts[0]).toBe(' vSR   ◆ 1 shielded  ▒ 2 hidden')
+  expect(texts[0]).toBe('▚▞ vSR  ▪ 1 shielded  ▪ 2 hidden')
 })
 
 test('the band leaves the engine its own row before any decision, and while a survey holds it', async ($, on) => {
@@ -346,11 +351,11 @@ test('the pane has one section per app in urgency order, each with its newest en
   const lines = await paneLines($, { columns: 60, rows: 50 })
   const headers = lines.filter(text => /^\S+ \w+ · \d+$/.test(text))
 
-  expect(afterLogo(lines)[0]).toBe('◆ 1 shielded  ▒ 2 hidden  ⇢ 1 routed  › 2 allowed')
-  expect(headers).toEqual(['‖ guard · 2', '◆ shield · 1', '▒ redact · 1', '⇢ router · 1'])
-  const guard = lines.slice(lines.indexOf('‖ guard · 2'), lines.indexOf('◆ shield · 1'))
-  expect(guard.filter(text => text.startsWith(' ALLOWED  '))).toEqual([' ALLOWED  git status', ' ALLOWED  ls'])
-  expect(lines).toContain(' REDACTED  ticket.txt')
+  expect(afterLogo(lines)[0]).toBe('▪ 1 shielded  ▪ 2 hidden  ▪ 1 routed  ▪ 2 allowed')
+  expect(headers).toEqual(['▪ guard · 2', '▪ shield · 1', '▪ redact · 1', '▪ router · 1'])
+  const guard = lines.slice(lines.indexOf('▪ guard · 2'), lines.indexOf('▪ shield · 1'))
+  expect(guard.filter(text => text.startsWith(' allowed  '))).toEqual([' allowed  git status', ' allowed  ls'])
+  expect(lines).toContain(' redacted  ticket.txt')
 })
 
 test('the pane gives every section its newest entry before older ones', async ($, on) => {
@@ -361,9 +366,9 @@ test('the pane gives every section its newest entry before older ones', async ($
 
   const lines = await paneLines($, { columns: 60, rows: 22 })
 
-  expect(lines).toContain(' REDACTED  ticket.txt')
-  expect(lines).toContain(' ALLOWED  git push origin b6')
-  expect(lines).not.toContain(' ALLOWED  git push origin b1')
+  expect(lines).toContain(' redacted  ticket.txt')
+  expect(lines).toContain(' allowed  git push origin b6')
+  expect(lines).not.toContain(' allowed  git push origin b1')
 })
 
 test('at 50 columns the cards of every new kind fall back to the one-line form', async ($, on) => {
@@ -374,7 +379,7 @@ test('at 50 columns the cards of every new kind fall back to the one-line form',
   const prompt = await rowTree($, { ...userRow('No, that is wrong.'), viewport: { columns: 50, rows: 30 } })
 
   expect(read.cards).toEqual([])
-  expect(vsrLines(read.texts).map(line => line.split(/ {2,}/)[1])).toEqual(['REDACTED', 'SHIELDED'])
+  expect(vsrLines(read.texts).map(line => line.split(/ {2,}/)[0])).toEqual(['▚▞ vSR redacted', '▚▞ vSR shielded'])
   expect(prompt.cards).toEqual([])
   expect(vsrLines(prompt.texts)).toHaveLength(1)
 })
@@ -416,18 +421,18 @@ const artText = (rows: 2 | 3 | 4, set: 'smooth' | 'blocks' = 'blocks') => MARK_A
 // Every row of every size and set of the mark.
 const ALL_ART = (['smooth', 'blocks'] as const).flatMap(set => ([2, 3, 4] as const).flatMap(rows => artText(rows, set)))
 
-test('a card draws no mark: no rows of the V and no picture, only the vSR tag', async ($, on) => {
+test('a card draws no mark: no rows of the V and no picture, only the ▚▞ vSR brand', async ($, on) => {
   await blockedPush($, on)
   const card = toolRow(callOf('call-9', PUSH.command))
 
   const { texts, props, cards } = await rowTree($, card)
 
-  expect(texts).toContain('✕  DECLINED  git push --force origin main')
-  expect(texts).toContain(' vSR  · guard')
+  expect(texts).toContain('▚▞ vSR  declined  git push --force origin main')
+  expect(texts).toContain('▚▞ vSR')
   expect(texts.filter(text => ALL_ART.includes(text))).toEqual([])
-  // Yellow and blue are left only to the tag's S and R.
+  // Yellow and blue are left only to the brand's two cells.
   expect(props.filter(one => one.color === HUES.Y || one.color === HUES.B)).toHaveLength(2)
-  expect(cards).toEqual([expect.objectContaining({ width: 76 })])
+  expect(cards).toEqual([expect.objectContaining({ backgroundColor: 'error' })])
   expect(await imagesIn($, card)).toEqual([])
   // The pane of the same session draws the mark, so the logo is on: the card leaves it out.
   const lines = await paneLines($)
@@ -449,8 +454,8 @@ test('with the logo off, neither the cards nor the pane draw it', { options: { l
   const { texts, cards } = await rowTree($, toolRow(callOf('call-9', PUSH.command)))
   const lines = await paneLines($)
 
-  expect(texts).toContain(' vSR  · guard')
-  expect(cards).toEqual([expect.objectContaining({ width: 76 })])
+  expect(texts).toContain('▚▞ vSR')
+  expect(cards).toEqual([expect.objectContaining({ backgroundColor: 'error' })])
   expect([...texts, ...lines].filter(text => ALL_ART.includes(text) || text === LOGO_NAME)).toEqual([])
   expect(await imagesIn($, PANE)).toEqual([])
 })
@@ -477,7 +482,7 @@ test('a mark file that is not a PNG gets characters (smooth ones in Ghostty), so
   const lines = await paneLines($)
 
   expect(await imagesIn($, PANE)).toEqual([])
-  expect(texts).toContain('✕  DECLINED  git push --force origin main')
+  expect(texts).toContain('▚▞ vSR  declined  git push --force origin main')
   for (const row of artText(4, 'smooth')) expect(lines).toContain(row)
 })
 
@@ -517,7 +522,7 @@ test('by default a route draws one plain line, with no card and no scores', asyn
   const { texts, cards } = await rowTree($, agentRow('call-1'))
 
   expect(cards).toEqual([])
-  expect(texts[1]).toBe(' vSR   ROUTED  subagent → Haiku · easy task')
+  expect(texts[1]).toBe('▚▞ vSR routed  subagent → Haiku · easy task')
 })
 
 test('by default an allowed command draws nothing under it, and a held one draws its card', async ($, on) => {
@@ -530,7 +535,7 @@ test('by default an allowed command draws nothing under it, and a held one draws
   await $.tool.call({ ...PUSH, tool_use_id: 'held' })
 
   expect(await rowTexts($, toolRow(callOf('allowed', 'git status')))).toEqual([ENGINE_ROW])
-  expect((await rowTree($, toolRow(callOf('held', PUSH.command)))).cards).toEqual([expect.objectContaining({ borderColor: 'error' })])
+  expect((await rowTree($, toolRow(callOf('held', PUSH.command)))).cards).toEqual([expect.objectContaining({ backgroundColor: 'error' })])
 })
 
 test('with display quiet a route draws nothing under its row', { options: { display: 'quiet' } }, async ($, on) => {

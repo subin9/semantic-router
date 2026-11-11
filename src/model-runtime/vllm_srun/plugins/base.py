@@ -881,6 +881,8 @@ class SurfacePlan(Generic[ItemT]):
     items: list[ItemT]
     input_tokens: int
     state: Any = None
+    # Planning-time cache observations retain hits until response assembly.
+    cache_lookups: dict[int, tuple[bool, Any]] = field(default_factory=dict)
 
 
 class LoadedModel(ABC, Generic[ItemT, ResultT]):
@@ -939,6 +941,20 @@ class LoadedModel(ABC, Generic[ItemT, ResultT]):
     @abstractmethod
     def plan_surface(self, surface: str, request: SurfaceRequest) -> SurfacePlan[ItemT]:
         """Validate and render a request; per-item failures stay in the plan."""
+
+    def plan_cached_surface(
+        self,
+        surface: str,
+        request: SurfaceRequest,
+        lookup: Callable[[str], tuple[bool, Any]],
+    ) -> SurfacePlan[ItemT]:
+        """Plan with optional early result lookup; the default preserves ordinary planning.
+
+        A family may skip materialization on a hit and retain its lookup in
+        ``SurfacePlan.cache_lookups`` by item position. Miss items must be ready
+        for the scheduler. Reference/golden requests use ``plan_surface``.
+        """
+        return self.plan_surface(surface, request)
 
     @abstractmethod
     def run(self, items: list[ItemT]) -> list[ResultT]:

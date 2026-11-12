@@ -302,7 +302,12 @@ positions (decision endpoints and query rows) and the shared-context prefix;
 with `packed`, an engine that `supports_packed` runs the rows back to back in
 one row instead (`engines/native/models/packed.py`: variable-length attention,
 the chunked gated delta rule over `cu_seqlens`, each causal convolution from a
-zero history), which only merged forwards ask for.
+zero history), which only merged forwards ask for. On a GPU whose branched
+forwards run static layouts, a noncausal backbone's packed text rows read at
+their last tokens run as one instead (`NativeEngine._rows_static`: each row a
+`prefix_bidir` state with an empty block), so they replay the bucket's graph
+rather than launching every kernel eager
+([record](records/decision3-packed-graphs.md)).
 `EncoderBatch` carries padded token IDs, the mask, the layer exits the readout
 needs and, for engines that run a graph, named graph inputs; `EncoderOutput`
 returns hidden states by layer or named graph outputs. Readouts stay in the

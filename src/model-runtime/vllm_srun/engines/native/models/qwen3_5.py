@@ -520,7 +520,9 @@ class Qwen3_5Backbone(nn.Module):
         """A packed ``Branches`` row (``[1, T, hidden]`` embeddings, ``[3, T]`` positions) through every layer;
         with ``rows``, the final norm of those rows only (``[1, len(rows), hidden]``).
         """
-        if not self.state_once:
+        if not self.state_once and not (
+            self.noncausal and getattr(branches, "noncausal_rows", False)
+        ):
             raise ValueError(f"attention mode {self.layout!r} cannot branch")
         assert self.kernels is not None, "bind kernels before running the backbone"
         rotary = self.rotary_emb(embeds, positions[:, None])

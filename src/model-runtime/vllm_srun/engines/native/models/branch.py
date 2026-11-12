@@ -521,6 +521,9 @@ class StaticBranches:
     """
 
     is_branches = True
+    # Set on a joined ``prefix_bidir`` layout whose blocks are all empty: every row attends to itself both
+    # ways from a zero state, the packed rows a noncausal backbone runs (``NativeEngine._rows_static``).
+    noncausal_rows = False
 
     def __init__(
         self,

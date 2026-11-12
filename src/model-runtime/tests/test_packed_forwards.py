@@ -231,6 +231,37 @@ def test_packed_text_rows_answer_as_each_question_alone(packed_model):
     assert _max_gap(merged, exact) < 0.05
 
 
+def test_packed_text_rows_run_as_a_static_layout_of_empty_blocks(
+    packed_model, monkeypatch
+):
+    model, engine = packed_model, packed_model.engine_model
+    plans = [
+        model.plan("Merge two sorted lists.", QUESTIONS),
+        model.plan("Prove that there are infinitely many primes. " * 6, QUESTIONS),
+    ]
+    items = [item for plan in plans for item in plan.items]
+    packed = model.run_approximate(items)
+
+    # Where static branches run (a GPU's), each row is a joined prefix_bidir state with an empty block, in
+    # its bucket's layout; the stand-in graph cache runs the forward it would capture.
+    class Eager:
+        max_tokens = 1 << 20
+
+        def run(self, key, inputs, forward, rows):
+            return forward(*inputs)
+
+    calls = []
+    rows_static = engine._rows_static
+    monkeypatch.setattr(engine, "static_branches", lambda: True)
+    monkeypatch.setattr(engine, "branch_graphs", Eager())
+    monkeypatch.setattr(
+        engine, "_rows_static", lambda batch: calls.append(batch) or rows_static(batch)
+    )
+    static = model.run_approximate(items)
+    assert len(calls) == 1 and calls[0].lengths == [len(item.ids) for item in items]
+    assert _max_gap(static, packed) < 1e-5
+
+
 def test_packed_image_rows_answer_as_each_request_alone(
     packed_model, png_url, monkeypatch
 ):

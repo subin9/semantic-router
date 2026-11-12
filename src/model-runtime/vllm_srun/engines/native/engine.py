@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import time
 from collections.abc import Callable
 from contextlib import AbstractContextManager
@@ -251,11 +252,13 @@ class NativeEngineModel(EngineModel):
             self.fast["fused_layers"] = 0 if reason else fast.install_fused(backbone)
             if reason:
                 self.fast["fused_skipped"] = reason
-        if getattr(backbone, "state_once", False) and options.graphs:
-            # Branched forwards replay per bucket (``models/branch.py`` ``static_layout``). A bucket
-            # of at most BRANCH_GRAPH_TOKENS rows is captured the first time it runs: its capture
-            # costs a few short forwards, and such buckets (concurrent short requests) recur. A
-            # longer one is captured the second time, so a bucket seen once runs eager.
+        branches = getattr(backbone, "state_once", False) or self._rows_branch()
+        if branches and options.graphs:
+            # Branched forwards (and a noncausal backbone's packed rows, ``_rows_static``) replay per
+            # bucket (``models/branch.py`` ``static_layout``). A bucket of at most BRANCH_GRAPH_TOKENS
+            # rows is captured the first time it runs: its capture costs a few short forwards, and such
+            # buckets (concurrent short requests) recur. A longer one is captured the second time, so
+            # a bucket seen once runs eager.
             self.branch_graphs = fast.Graphs(
                 backbone,
                 cast(Any, None),
@@ -652,6 +655,35 @@ class NativeEngineModel(EngineModel):
             and prep.variant == self.kernels.select("causal_conv1d").variant
         )
 
+    def _rows_branch(self) -> bool:
+        """Whether packed text rows can run as a static branched layout: a noncausal backbone that branches."""
+        return self.noncausal and hasattr(self.backbone, "forward_branches")
+
+    def _rows_static(self, batch: ForwardBatch) -> ForwardOutput:
+        """Packed text rows read at their last tokens, as a joined ``prefix_bidir`` layout of empty blocks:
+        each row is a state that attends to itself both ways from a zero state, what ``Packed`` computes,
+        but in a bucket's static layout, so the forward replays a graph instead of running eager.
+        """
+        ids = batch.input_ids.reshape(-1).tolist()
+        bounds = itertools.pairwise([0, *itertools.accumulate(batch.lengths)])
+        rows = [ids[start:end] for start, end in bounds]
+        order = list(range(len(rows)))
+        hidden = self._branch_static(
+            cast(models.StateOnceBackbone, self.backbone),
+            rows, [[] for _ in rows], order, order, layout=PREFIX_BIDIR,
+        )  # fmt: skip
+        return ForwardOutput(gathered=hidden[:, None], query=hidden)
+
+    def _reads_last(self, batch: ForwardBatch) -> bool:
+        """Whether a packed batch reads only each row's last token, once (what ``_rows_static`` returns)."""
+        ends = torch.tensor(list(itertools.accumulate(batch.lengths))) - 1
+        gather = batch.gather.reshape(len(batch.lengths), -1)
+        return (
+            gather.shape[1] == 1
+            and torch.equal(gather[:, 0].cpu(), ends)
+            and torch.equal(batch.query.reshape(-1).cpu(), ends)
+        )
+
     def _branch_static(
         self,
         backbone: models.StateOnceBackbone,
@@ -659,6 +691,7 @@ class NativeEngineModel(EngineModel):
         blocks: list[list[int]],
         owners: list[int],
         order: list[int],
+        layout: str | None = None,
     ) -> torch.Tensor:
         """Text states and blocks in the static layout of their bucket (``static_layout``), the forward
         replayed from the bucket's graph once captured; eager runs compute what a replay computes.
@@ -675,7 +708,8 @@ class NativeEngineModel(EngineModel):
             ),
             default=1,
         )
-        layout = backbone.layout
+        rows_only = layout is not None
+        layout = layout or backbone.layout
         one_mask = layout in (PREFIX_BIDIR, CAUSAL)
         joined = len(blocks) == len(states) and one_mask
         rows = sum(map(len, states)) + sum(map(len, blocks))
@@ -704,6 +738,7 @@ class NativeEngineModel(EngineModel):
 
         def forward(flat32: torch.Tensor, flat64: torch.Tensor) -> torch.Tensor:
             view = StaticBranches(shape, layout, flat32, flat64, values)
+            view.noncausal_rows = rows_only
             embeds = backbone.embed(view.ids[None])
             positions = view.positions.expand(3, -1)
             return backbone.forward_branches(embeds, positions, view, view.last)[0]
@@ -969,6 +1004,17 @@ class NativeEngineModel(EngineModel):
             raise ValueError(f"packed forwards are unavailable: {self.packed_reason}")
         if sum(batch.lengths) != batch.input_ids.shape[-1]:
             raise ValueError("packed lengths do not cover the input IDs")
+        graphs = self.branch_graphs
+        if (
+            batch.images is None
+            and self._rows_branch()
+            and self.static_branches()
+            # Past the graphs' token limit the static layout runs eager, which costs more than packed rows.
+            and graphs is not None
+            and sum(batch.lengths) <= graphs.max_tokens
+            and self._reads_last(batch)
+        ):
+            return self._rows_static(batch)
         layout = Packed(batch.lengths, self.device)
         input_ids = batch.input_ids.to(self.device)
         backbone = cast(Any, self.backbone)

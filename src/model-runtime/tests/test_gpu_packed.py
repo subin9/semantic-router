@@ -111,6 +111,11 @@ def test_packed_rows_answer_as_each_question_alone(served, png_url):
         merged = model.run_approximate(rows)
         alone = [model.run([row])[0] for row in rows]
         assert _gap(merged, alone) < 0.02
+    # Merged text rows replay the static layout's graphs (``_rows_static``), not an eager packed forward.
+    before = model.engine_model.branch_graphs.stats["replays"]
+    for _ in range(3):
+        model.run_approximate(text)
+    assert model.engine_model.branch_graphs.stats["replays"] > before
 
 
 @pytest.mark.parametrize("which", ["served", "state_once_served"])

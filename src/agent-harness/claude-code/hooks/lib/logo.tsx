@@ -122,9 +122,6 @@ export function mark(elements: Elements, logo: Logo, rows: MarkRows) {
   return <Box flexDirection="column">{MARK_ART[set][rows].map(cells => artRow(elements, cells))}</Box>
 }
 
-// The rows the pane's logo takes, its gap below included.
-export const wordmarkHeight = (logo: Logo) => (logo.kind === 'off' ? 0 : WORDMARK_ROWS + 1)
-
 // The top of the pane: the mark, and the name beside it in the terminal's own text color.
 // The short mark: the logo's V in two quadrant cells, its yellow stroke then its blue one, and the name in dim text,
 // so a line reads as vSR's and copies as such. BRAND is its text, for measuring.

@@ -23,6 +23,7 @@ func CanonicalConfigFromRouterConfig(cfg *RouterConfig) CanonicalConfig {
 			Defaults: CanonicalProviderDefaults{
 				DefaultModel:           cfg.DefaultModel,
 				DefaultReasoningEffort: cfg.DefaultReasoningEffort,
+				TLS:                    cloneProviderDefaultsTLS(cfg.DefaultBackendTLS),
 			},
 			Models: canonicalProviderModelsFromRouterConfig(cfg),
 		},
@@ -126,6 +127,7 @@ func CanonicalGlobalFromRouterConfig(cfg *RouterConfig) *CanonicalGlobal {
 			AllowLossyTranslation: cfg.AllowLossyTranslation,
 			RoutingInput:          cfg.RoutingInput,
 			Headers:               cfg.Headers,
+			ContextWindow:         cfg.ContextWindow,
 		},
 		Services: CanonicalServiceGlobal{
 			API:           cfg.API,
@@ -252,6 +254,7 @@ func canonicalProviderModelFromRuntime(
 		Pricing:          params.Pricing,
 		Reliability:      params.Reliability,
 		ExternalModelIDs: copyStringMap(params.ExternalModelIDs),
+		Tokenizer:        params.Tokenizer,
 		BackendRefs: canonicalProviderBackendRefs(
 			name,
 			params,
@@ -263,6 +266,7 @@ func canonicalProviderModelFromRuntime(
 	if providerModelID := canonicalProviderModelID(params.ExternalModelIDs); providerModelID != "" {
 		providerModel.ProviderModelID = providerModelID
 	}
+	providerModel.UnsupportedCapabilities = append([]string(nil), params.UnsupportedCapabilities...)
 	if params.Catalog == "" {
 		providerModel.ModelFacts = ModelFacts{
 			ParamSize:         params.ParamSize,
@@ -306,10 +310,12 @@ func cloneCanonicalProviderModel(model *CanonicalProviderModel) *CanonicalProvid
 	clone := *model
 	clone.Reasoning = cloneCanonicalReasoning(model.Reasoning)
 	clone.ExternalModelIDs = copyStringMap(model.ExternalModelIDs)
+	clone.UnsupportedCapabilities = append([]string(nil), model.UnsupportedCapabilities...)
 	clone.BackendRefs = make([]CanonicalBackendRef, len(model.BackendRefs))
 	for index, backend := range model.BackendRefs {
 		clone.BackendRefs[index] = backend
 		clone.BackendRefs[index].Headers = copyStringMap(backend.Headers)
+		clone.BackendRefs[index].TLS = cloneDeploymentTLS(backend.TLS)
 	}
 	return &clone
 }
@@ -400,6 +406,7 @@ func canonicalBackendRefFromRuntime(modelName string, endpoint VLLMEndpoint, fal
 	if len(profile.ExtraHeaders) > 0 {
 		ref.Headers = copyStringMap(profile.ExtraHeaders)
 	}
+	ref.TLS = cloneDeploymentTLS(profile.TLS)
 	return ref
 }
 

@@ -6,27 +6,28 @@ import { HUES, MARK_ART } from './lib/mark-art'
 import {
   agentRow,
   bandRow,
-  readCallOf,
-  userRow,
-  CHAIN,
   callOf,
+  CHAIN,
   DELETE,
-  ENGINE_ROW,
   engine,
-  HOME,
+  ENGINE_ROW,
   groupRow,
+  HOME,
   NO,
+  overviewRow,
   PANE,
   PANE_ID,
-  PLUGIN,
   paneLines,
   paneText,
+  PLUGIN,
   PUSH,
-  type Reply,
+  readCallOf,
   rowTexts,
   rowTree,
   SPAWN,
   toolRow,
+  type Reply,
+  userRow,
   vsrLines,
   YES,
 } from './kit'
@@ -457,6 +458,23 @@ test('the pane opens with the V four rows high and the name beside it', async ($
 
   for (const row of artText(4)) expect(lines).toContain(row)
   expect(lines).toContain(LOGO_NAME)
+  // under the name, whether vSR is checking at all
+  expect(lines[lines.indexOf(LOGO_NAME) + 1]).toBe('● decision model on this machine')
+})
+
+test('the six apps take one row where the pane is wide enough, and three a row where it is not', async ($, on) => {
+  await blockedPush($, on)
+
+  const appsRows = async (bodyColumns: number) => {
+    const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns }, surface: 'terminal' })
+    const texts = (await ui.findAll({ type: 'Text' })).map(one => one.text ?? '')
+    await ui.unmount()
+    // each row of apps starts with its label cell: `apps`, then an empty one
+    const first = texts.findIndex(text => text.startsWith('apps'))
+    return texts.slice(first, texts.findIndex(text => text.startsWith('redact waits'))).filter(text => /^(apps)?\s*$/.test(text)).length
+  }
+  expect(await appsRows(120)).toBe(1)
+  expect(await appsRows(60)).toBe(2)
 })
 
 test('with the logo off, neither the cards nor the pane draw it', { options: { logo: 'off' } }, async ($, on) => {
@@ -522,7 +540,7 @@ test('the logo option picks the smooth characters whatever the terminal says', {
 test('the pane says when a token goes to a remote runtime over plain http', { options: { runtime: 'remote', runtimeUrl: 'http://10.0.0.5:8790/v1/decisions', runtimeToken: 'tok' } }, async ($, on) => {
   engine(on, {})
 
-  expect(await paneText($, /^model/, 120)).toBe('model  remote · http://10.0.0.5:8790/v1/decisions · token set, sent unencrypted')
+  expect(await overviewRow($, 'model', 120)).toBe('model  remote · http://10.0.0.5:8790/v1/decisions · token set, sent unencrypted')
 })
 
 test('by default a route draws one plain line, with no card and no scores', async ($, on) => {

@@ -7,13 +7,14 @@ import {
   HOME,
   LOG_FILE,
   logLines,
+  overviewRow,
   paneLines,
   paneText,
   PUSH,
-  type Reply,
   rowTree,
   SESSION,
   SPAWN,
+  type Reply,
   YES,
 } from './kit'
 
@@ -219,7 +220,7 @@ test('a ~/ log path lands under HOME; with HOME unset the file is not written, t
   await clock.advance(0)
 
   expect(reply.files).toEqual({})
-  expect(await paneText($, /^calibrated/, 120)).toBe('calibrated  never · 1 decision since · log ~/.claude/vsr/decisions.jsonl')
+  expect(await overviewRow($, 'calibrated', 120)).toBe('calibrated  never · 1 decision since · log ~/.claude/vsr/decisions.jsonl')
 })
 
 test('with CLAUDE_CONFIG_DIR set, the default log goes into that config directory', async ($, on) => {
@@ -277,7 +278,7 @@ test('an empty log path writes no line and reminds of nothing', { options: { log
 
   expect(reply.files).toEqual({})
   expect(reply.toasts).toEqual([])
-  expect(await paneText($, /^calibrated/)).toBe('calibrated  log off')
+  expect(await overviewRow($, 'calibrated')).toBe('calibrated  log off')
 })
 
 test('the log keeps the newest 5000 lines across sessions', async ($, on) => {
@@ -329,7 +330,7 @@ test('/vsr calibrated starts the count again, and the pane shows when', async ($
   const ran = await $.command.run({ command: 'vsr', args: 'calibrated' })
 
   expect(ran.text).toBe('vSR: calibrated at 1970-01-02T00:00:00.000Z.')
-  expect(await paneText($, /^calibrated/, 120)).toBe(
+  expect(await overviewRow($, 'calibrated', 120)).toBe(
     'calibrated  1970-01-02T00:00:00.000Z · 0 decisions since · log ~/.claude/vsr/decisions.jsonl',
   )
 })
@@ -439,7 +440,7 @@ test('requests go to the configured runtime URL, and its health check and model 
     'https://sr.example.com/api/v1/decisions',
     'https://sr.example.com/api/v1/decisions',
   ])
-  expect(await paneText($, /^model/, 120)).toBe('model  remote · https://sr.example.com/api/v1/decisions')
+  expect(await overviewRow($, 'model', 120)).toBe('model  remote · https://sr.example.com/api/v1/decisions')
 })
 
 test('a runtime that does not answer its health check toasts and draws the offline band', async ($, on) => {
@@ -453,7 +454,8 @@ test('a runtime that does not answer its health check toasts and draws the offli
   expect(reply.toasts).toEqual(["vSR: the decision model is not answering at http://127.0.0.1:8790/v1/decisions · vSR's checks step aside until it does (apps set to wait until done hold instead); guard's fixed rules still hold · /vsr:setup"])
   expect(texts[0]).toBe('▚▞ vSR  ▪ model offline · guard, redact, shield not checking')
   expect(props[texts.indexOf('▪')]).toMatchObject({ color: 'warning' })
-  expect((await paneLines($)).filter(line => line.startsWith('model'))[0]).toContain('not answering')
+  expect(await overviewRow($, 'model')).toContain('not answering')
+  expect(await paneLines($)).toContain('○ decision model on this machine is not answering')
 })
 
 test('a runtime that answers its health check leaves the band and the toasts alone', async ($, on) => {

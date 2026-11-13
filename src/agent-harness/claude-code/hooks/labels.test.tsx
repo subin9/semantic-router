@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { HOME, isControl, PANE, PUSH, type Reply, SPAWN, engine, paneLines } from './kit'
+import { engine, HOME, isControl, overviewRow, PANE, paneLines, PUSH, SPAWN, type Reply } from './kit'
 import { costOf } from './lib/prices'
 
 type Test = Parameters<Parameters<typeof test>[1]>[0]
@@ -87,7 +87,7 @@ test("the pane says what a routed subagent cost against the session's model, at 
   await $.agent.spawn(SPAWN)
   await routedTurn($, USAGE)
 
-  const routing = (await paneLines($, { columns: 140, rows: 60 })).find(line => line.startsWith('routing'))
+  const routing = await overviewRow($, 'routing', 140)
 
   expect(routing).toBe('routing  $0.15 for 1 subagent turn vs $6.00 on Opus · saved 98% · est. at list price')
 })
@@ -99,7 +99,7 @@ test('the spend of a long subagent counts though its route is older than the pan
   for (let i = 0; i < 120; i += 1) await $.tool.check({ tool: 'Bash', input: { command: `make test${i}` }, tool_use_id: `c${i}` } as never)
   await routedTurn($, USAGE)
 
-  const routing = (await paneLines($, { columns: 140, rows: 60 })).find(line => line.startsWith('routing'))
+  const routing = await overviewRow($, 'routing', 140)
 
   expect(routing).toBe('routing  $0.15 for 1 subagent turn vs $6.00 on Opus · saved 98% · est. at list price')
 })
@@ -110,7 +110,7 @@ test('a subagent sent to a stronger model than the session shows what it cost mo
   await $.agent.spawn({ ...SPAWN, parentModel: 'claude-sonnet-5-5' })
   await routedTurn($, { ...USAGE, model: 'claude-opus-5-5' })
 
-  const routing = (await paneLines($, { columns: 140, rows: 60 })).find(line => line.startsWith('routing'))
+  const routing = await overviewRow($, 'routing', 140)
 
   expect(routing).toBe('routing  $6.00 for 1 subagent turn vs $3.00 on Sonnet 5.5 · cost 100% more · est. at list price')
 })

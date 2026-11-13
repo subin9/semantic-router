@@ -4,9 +4,9 @@ import type { App, Calibration, Decision, Spend } from '../../types'
 import { APP_NAMES, APPS, type Color, LOOKS, SECTIONS, sectionOf } from './apps'
 import { type Body, type Described, describe, type Gauge, TALLY_DOT, type TallyItem, tallyOf, tallyWidth, type Weight } from './describe'
 import { ANSWERS, type Answer, answersFor } from './labels'
-import { BRAND, brand, type Logo, wordmark } from './logo'
+import { BRAND, brand, type Logo, type Status, wordmark } from './logo'
 import { holdMeter, type Segment, textWidth } from './meters'
-import { choiceOf, type Display, isCleartextRemote, type Settings, WAIT_APPS, WAIT_CHOICES, type WaitApp, type WaitChoice } from './settings'
+import { choiceOf, type Display, isCleartextRemote, remoteHostOf, type Settings, WAIT_APPS, WAIT_CHOICES, type WaitApp, type WaitChoice } from './settings'
 import { clip, fixed, modelName } from './text'
 
 export type Elements = ReturnType<EngineInterface['ui']['resolve']>
@@ -222,6 +222,16 @@ function spendWords({ spend }: Overview) {
   return `${dollars(spend.actual)} for ${spend.turns} subagent ${spend.turns === 1 ? 'turn' : 'turns'} vs ${dollars(spend.baseline)} on ${modelName(sessionModel)} · ${verdict} · est. at list price`
 }
 
+// The model and where it runs, with a dot that says whether it answered last time vSR asked.
+export function runtimeStatus({ settings: { runtime }, isOffline }: Pick<Overview, 'settings' | 'isOffline'>): Status {
+  const where = remoteHostOf(runtime.url)
+  const model = runtime.model === '' ? 'decision model' : runtime.model
+  const place = where === undefined ? 'on this machine' : `at ${where}`
+  return isOffline
+    ? { text: `○ ${model} ${place} is not answering`, color: 'warning' }
+    : { text: `● ${model} ${place}`, color: 'success' }
+}
+
 const tokenWords = ({ url, token }: Settings['runtime']) =>
   token === '' ? '' : isCleartextRemote(url) ? ' · token set, sent unencrypted' : ' · token set'
 
@@ -250,15 +260,20 @@ function overviewRows(about: Overview) {
   ] as const
 }
 
+// Each row's label in the controls' label column, its value wrapping inside its own column.
 export function overview(elements: Elements, about: Overview) {
   const { Box, Text } = elements
   return (
     <Box flexDirection="column" marginTop={1}>
       {overviewRows(about).map(([label, value]) => (
-        <Text>
-          <Text dimColor>{`${label}  `}</Text>
-          {value}
-        </Text>
+        <Box flexDirection="row">
+          <Box width={CONTROL_LABEL_WIDTH} flexShrink={0}>
+            <Text dimColor>{label}</Text>
+          </Box>
+          <Box flexShrink={1}>
+            <Text>{value}</Text>
+          </Box>
+        </Box>
       ))}
     </Box>
   )
@@ -267,21 +282,22 @@ export function overview(elements: Elements, about: Overview) {
 // What pressing a control at the top of the pane does: turn an app on or off, or pick how long one waits.
 export type Controls = { toggle: (app: App) => void; wait: (app: WaitApp, choice: WaitChoice) => void }
 
-// Three apps to a row: with each hotkey drawn before its name (`1: ● guard`), six would not fit 60 columns.
-const APPS_PER_ROW = 3
 const CONTROL_LABEL_WIDTH = 'redact waits'.length + 2
 const WAIT_WORDS: Record<WaitChoice, string> = { '1': '1s', '2': '2s', '3': '3s', done: 'until done' }
-const APP_ROWS = Array.from({ length: Math.ceil(APP_NAMES.length / APPS_PER_ROW) }, (_, row) =>
-  APP_NAMES.slice(row * APPS_PER_ROW, (row + 1) * APPS_PER_ROW),
-)
+// With each hotkey drawn before its name (`1: ● guard`), the six apps take one row from this width, else three a row.
+const ONE_ROW_COLUMNS = CONTROL_LABEL_WIDTH + APP_NAMES.reduce((sum, app) => sum + `1: ● ${app}`.length + 2, 0)
+const appRows = (columns: number) => {
+  const perRow = columns >= ONE_ROW_COLUMNS ? APP_NAMES.length : 3
+  return Array.from({ length: Math.ceil(APP_NAMES.length / perRow) }, (_, row) => APP_NAMES.slice(row * perRow, (row + 1) * perRow))
+}
 
 // The apps, each pressed (or its digit typed) to turn it on or off, then how long each protective app waits: the
 // chosen wait a pill in the app's colour, the rest dim and as wide, so the row does not shift when the pick moves.
-export function controls(elements: Elements, settings: Settings, act: Controls) {
+export function controls(elements: Elements, settings: Settings, act: Controls, columns = 0) {
   const { Box, Button, Text } = elements
   return (
     <Box flexDirection="column" marginBottom={1}>
-      {APP_ROWS.map((row, index) => (
+      {appRows(columns).map((row, index) => (
         <Box flexDirection="row">
           <Text>{(index === 0 ? 'apps' : '').padEnd(CONTROL_LABEL_WIDTH)}</Text>
           <Box flexDirection="row" gap={2}>
@@ -358,8 +374,8 @@ export function dashboard(
   })
   return (
     <Box flexDirection="column">
-      {wordmark(elements, logo)}
-      {controls(elements, about.settings, act)}
+      {wordmark(elements, logo, runtimeStatus(about))}
+      {controls(elements, about.settings, act, columns)}
       <Text>{tallyText(elements, tally)}</Text>
       {hint ? <Text dimColor>{ANSWER_HINT}</Text> : null}
       {sections.map(({ section, entries }) => (

@@ -206,6 +206,15 @@ export async function paneText($: Test, find: RegExp, bodyColumns = PANE.props.b
   return row?.text
 }
 
+// A row of the pane's foot as it reads, its label then its value, which sit in columns of their own.
+export async function overviewRow($: Test, label: string, bodyColumns = PANE.props.bodyColumns) {
+  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns }, surface: 'terminal' })
+  const lines = (await ui.findAll({ type: 'Text' })).map(row => row.text ?? '')
+  await ui.unmount()
+  const at = lines.lastIndexOf(label)
+  return at < 0 ? undefined : `${label}  ${lines[at + 1]}`
+}
+
 export async function paneLines($: Test, viewport = { columns: 60, rows: 40 }) {
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal', viewport })
   const lines = (await ui.findAll({ type: 'Text' })).map(row => row.text ?? '')

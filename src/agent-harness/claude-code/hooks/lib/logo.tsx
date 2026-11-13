@@ -141,13 +141,21 @@ export function brand({ Text }: Elements) {
   )
 }
 
-export function wordmark(elements: Elements, logo: Logo) {
-  if (logo.kind === 'off') return null
+// What the pane says under the name: the decision model and whether it answers, so the first thing read is whether
+// vSR is checking at all.
+export type Status = { text: string; color: string }
+
+export function wordmark(elements: Elements, logo: Logo, status?: Status) {
   const { Box, Text } = elements
+  const line = status === undefined ? null : <Text color={status.color}>{status.text}</Text>
+  if (logo.kind === 'off') return line === null ? null : <Box marginBottom={1}>{line}</Box>
   return (
     <Box flexDirection="row" gap={2} alignItems="center" marginBottom={1}>
       {mark(elements, logo, WORDMARK_ROWS)}
-      <Text weight="bold">{LOGO_NAME}</Text>
+      <Box flexDirection="column">
+        <Text weight="bold">{LOGO_NAME}</Text>
+        {line}
+      </Box>
     </Box>
   )
 }

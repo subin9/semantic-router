@@ -4,7 +4,7 @@ import type { Decision } from '../types'
 import { readOffline } from './lib/classify'
 import { describe, named } from './lib/describe'
 import { APP_NAMES } from './lib/apps'
-import { band, type Controls, controls, dashboard, type Elements, overview, rowView } from './lib/draw'
+import { band, type Controls, controls, dashboard, type Elements, overview, rowView, runtimeStatus } from './lib/draw'
 import { type Answer, giveLabel, labelsFile, readLabels } from './lib/labels'
 import { markCalibrated, readCalibration } from './lib/log'
 import { BLOCKS_LOGO, loadLogo, type Logo, NO_LOGO, wordmark } from './lib/logo'
@@ -218,8 +218,8 @@ export function registerView(on: On, settings: Settings) {
       const { Box, Text } = elements
       return (
         <Box flexDirection="column">
-          {wordmark(elements, logo)}
-          {controls(elements, settings, act)}
+          {wordmark(elements, logo, runtimeStatus(about))}
+          {controls(elements, settings, act, e.props.bodyColumns)}
           <Text dimColor>No decisions yet. Each one appears under the row it decided on.</Text>
           {overview(elements, about)}
         </Box>

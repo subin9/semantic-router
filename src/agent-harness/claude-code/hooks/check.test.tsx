@@ -60,7 +60,7 @@ test('the check card is drawn under the last block of the answer it judged, and 
   expect(last.texts[0]).toBe(ENGINE_ROW)
   expect(last.cards).toEqual([expect.objectContaining({ backgroundColor: 'warning' })])
   expect(last.texts).toContain('▚▞ vSR  unverified  some claims are not backed by what Claude read')
-  expect(last.texts).toContain('unsupported ▐▐▐▐▐▐▐▐┃▐▐▐▐▐▐▐▐  0.53  flags at 0.50')
+  expect(last.texts).toContain('unsupported ▐▐▐▐▐▐▐▐┃▐▁▁▁▁▁▁▁  0.53  flags at 0.50')
   expect(last.texts).toContain('look twice before you rely on it')
   expect(first.cards).toEqual([])
 })

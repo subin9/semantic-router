@@ -214,7 +214,7 @@ test('a Bash call gets its guard line and a REDACTED card, and its output is not
   expect(texts).toContain('▚▞ vSR  redacted  1 item hidden from the output of cat a.txt')
   expect(texts).toContain('email ×1')
   expect(texts.some(text => /shielded/.test(text))).toBe(false)
-  expect(texts.filter(text => /^▚▞ vSR allowed  \S/.test(text))).toEqual(['▚▞ vSR allowed  cat a.txt  risk ▐▐▐▐▐▐▐▐▐▐▐┃▐ 0.10 < 0.90'])
+  expect(texts.filter(text => /^▚▞ vSR allowed  \S/.test(text))).toEqual(['▚▞ vSR allowed  cat a.txt  risk ▐▁▁▁▁▁▁▁▁▁▁┃▁ 0.10 < 0.90'])
 })
 
 test('a folded group adds the cards of the reads it hides', { options: { display: 'verbose' } }, async ($, on) => {

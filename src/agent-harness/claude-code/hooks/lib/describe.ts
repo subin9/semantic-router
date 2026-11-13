@@ -225,8 +225,9 @@ const KINDS: { [K in Decision['kind']]: Kind<Extract<Decision, { kind: K }>> } =
           inline: { kind: 'compact', score: d.review, threshold: d.threshold },
         }
       }
-      if (d.outcome === 'approved') return asked('APPROVED', 'permission', `you let it run · ${words}`, reviewScore(d))
-      if (d.outcome === 'declined') return asked('DECLINED', 'error', `you said no · ${words}`, reviewScore(d))
+      // The person's answer leads, so the line never reads as vSR letting a command run or stopping it.
+      if (d.outcome === 'approved') return asked('YOU APPROVED', 'permission', `held by guard · ${words}`, reviewScore(d))
+      if (d.outcome === 'declined') return asked('YOU DECLINED', 'error', `held by guard · ${words}`, reviewScore(d))
       return asked('HELD', 'warning', `waiting for you · ${words}`, `${reviewScore(d)} · ${part}`)
     },
     weight: d => (d.verdict === 'ask' ? 'act' : 'quiet'),
@@ -389,18 +390,15 @@ export const named = (described: Described): Described => ({
 
 export type TallyItem = { color: Color; text: string }
 
-const heldOutcomes = (list: readonly Decision[]) => {
-  const asked = list.flatMap(d => (d.kind === 'guard' && d.verdict === 'ask' ? [d.outcome ?? 'waiting'] : []))
-  const inside = ([['waiting', 'waiting'], ['declined', 'declined'], ['approved', 'approved']] as const)
-    .map(([outcome, word]) => [asked.filter(one => one === outcome).length, word] as const)
-    .filter(([count]) => count > 0)
-    .map(([count, word]) => `${count} ${word}`)
-  return inside.length > 0 ? ` (${inside.join(', ')})` : ''
-}
+// A held command by what the person answered: waiting, declined or approved.
+const heldAs = (outcome: 'waiting' | 'declined' | 'approved') => (list: readonly Decision[]) =>
+  list.filter(d => d.kind === 'guard' && d.verdict === 'ask' && (d.outcome ?? 'waiting') === outcome).length
 
 // Most urgent first, so a narrow band drops what went as usual before what needs a look; an item shows once its count is above zero.
 const TALLIES: readonly { color: Color; word: string; count: (list: readonly Decision[]) => number; more?: (list: readonly Decision[]) => string }[] = [
-  { color: APPS.guard.color, word: 'held', count: list => list.filter(d => d.kind === 'guard' && d.verdict === 'ask').length, more: heldOutcomes },
+  { color: APPS.guard.color, word: 'held', count: heldAs('waiting') },
+  { color: 'error', word: 'declined by you', count: heldAs('declined') },
+  { color: 'permission', word: 'approved by you', count: heldAs('approved') },
   { color: LOOKS.unverified.color, word: 'unverified', count: list => list.filter(d => d.kind === 'check' && d.verdict === 'unverified').length },
   { color: LOOKS.withheld.color, word: 'withheld', count: list => list.filter(d => d.kind === 'unavailable' && d.withheld).length },
   { color: APPS.shield.color, word: 'shielded', count: list => list.filter(d => d.kind === 'shield').length },

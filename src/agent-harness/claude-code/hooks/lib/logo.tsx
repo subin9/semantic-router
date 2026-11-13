@@ -127,11 +127,15 @@ export function mark(elements: Elements, logo: Logo, rows: MarkRows) {
 // so a line reads as vSR's and copies as such. BRAND is its text, for measuring.
 export const BRAND = '▚▞ vSR'
 
+// Theme keys, not the logo's own hues: on a light theme the logo's yellow would sit at under 2:1 on white, and the
+// theme's warning yellow and ide blue are darker there.
+export const BRAND_HUES = { Y: 'warning', B: 'ide' } as const
+
 export function brand({ Text }: Elements) {
   return (
     <Text>
-      <Text color={HUES.Y}>▚</Text>
-      <Text color={HUES.B}>▞</Text>
+      <Text color={BRAND_HUES.Y}>▚</Text>
+      <Text color={BRAND_HUES.B}>▞</Text>
       <Text dimColor>{' vSR'}</Text>
     </Text>
   )

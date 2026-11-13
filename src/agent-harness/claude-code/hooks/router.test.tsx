@@ -328,7 +328,7 @@ test('an Agent row with a route draws a ROUTED card with the difficulty meter, a
   const { texts, props } = await rowTree($, agentRow('call-1'))
 
   expect(texts).toContain('▚▞ vSR  routed  subagent → Haiku · medium effort')
-  expect(texts).toContain('easy ▐▐▐▐│▐▐▐▐▐▐▐▐│▐▐▐▐ hard  0.26 of 2 · easy task')
+  expect(texts).toContain('easy ▐▐▁▁│▁▁▁▁▁▁▁▁│▁▁▁▁ hard  0.26 of 2 · easy task')
   // 0.26 of 2 lights the first two of 16 cells.
   expect(props[texts.indexOf('▐▐')]).toMatchObject({ color: 'suggestion' })
   expect(texts).toContainEqual('reasoning steps 0.17 · Haiku runs at medium · Rename a variable')
@@ -393,7 +393,7 @@ test('a vague answer draws a KEPT card with the difficulty meter', { options: { 
 
   expect(cards).toEqual([expect.objectContaining({ backgroundColor: 'suggestion' })])
   expect(texts).toContain('▚▞ vSR  kept  subagent stays on Opus 5.5')
-  expect(texts).toContain('easy ▐▐▐▐│▐▐▐▐▐▐▐▐│▐▐▐▐ hard  1.00 of 2 · multi-step task')
+  expect(texts).toContain('easy ▐▐▐▐│▐▐▐▐▁▁▁▁│▁▁▁▁ hard  1.00 of 2 · multi-step task')
   expect(texts).toContain('model unsure · confidence 0.27 < 0.30')
 })
 

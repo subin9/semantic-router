@@ -43,9 +43,9 @@ installed into `~/.local/share/vsr`, without sudo.
 ## What you see
 
 vSR draws each decision under the row it is about, and keeps a one-line tally above the prompt.
-Every line vSR draws starts with its mark, a small yellow and blue V, and its name, so it reads as
-a sentence: `▚▞ vSR redacted  3 items hidden: email, phone`. `/vsr` opens a pane with every decision
-of the session and the current setup.
+Each decision starts with vSR's mark, a small yellow and blue V, and its name, so the line reads as
+a sentence: `▚▞ vSR redacted  3 items hidden: email, phone`. A card's score and note sit indented
+under that line. `/vsr` opens a pane with every decision of the session and the current setup.
 
 The top of the `/vsr` pane, under the logo, holds the controls, which you can change at any time:
 
@@ -61,9 +61,9 @@ The same changes work as commands: `/vsr redact off`, `/vsr check on`, `/vsr gua
 By default (`display: normal`) vSR only interrupts when it matters:
 
 - **A card** when something needs your eyes: the outcome in a filled pill, then the score as a row of
-  cells and a note under it:
+  cells, lit up to the score and low past it, with the line where the app acts, and a note under it:
   - `held`: a Bash command waits for your yes or no in Claude Code's permission dialog. The dialog says which part was risky and why.
-  - `declined` or `approved`: what you answered.
+  - `you declined` or `you approved`: what you answered to a command guard held.
   - `shielded`: a file or page tried to instruct Claude; Claude was told to treat it as data.
   - `unverified`: the answer claims things that what Claude read does not back. Look twice.
   - `redacted` with a note on unchecked characters: a long output was only partly checked in time.

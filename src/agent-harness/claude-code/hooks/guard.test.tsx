@@ -106,8 +106,8 @@ test('a held command the person lets run shows APPROVED', async ($, on) => {
 
   await $.tool.call(PUSH)
 
-  expect(await paneText($, /^ approved /)).toBe(' approved  git push --force origin main')
-  expect(await paneText($, /you let it run/)).toBe('you let it run · looks destructive · risk score 0.98 ≥ 0.90')
+  expect(await paneText($, /^ you approved /)).toBe(' you approved  git push --force origin main')
+  expect(await paneText($, /^held by guard/)).toBe('held by guard · looks destructive · risk score 0.98 ≥ 0.90')
 })
 
 test('a held command refused by the tool.call chain shows DECLINED', async ($, on) => {
@@ -117,7 +117,7 @@ test('a held command refused by the tool.call chain shows DECLINED', async ($, o
 
   await $.tool.call(PUSH)
 
-  expect(await paneText($, /you said no/)).toContain('you said no · looks destructive')
+  expect(await paneText($, /^held by guard/)).toContain('held by guard · looks destructive')
 })
 
 test('a held command the person says no to shows DECLINED', async ($, on) => {
@@ -127,7 +127,7 @@ test('a held command the person says no to shows DECLINED', async ($, on) => {
 
   await $.tool.call(PUSH)
 
-  expect(await paneText($, /^ declined /)).toBe(' declined  git push --force origin main')
+  expect(await paneText($, /^ you declined /)).toBe(' you declined  git push --force origin main')
 })
 
 test('a held command that ran and failed still shows APPROVED', async ($, on) => {
@@ -137,7 +137,7 @@ test('a held command that ran and failed still shows APPROVED', async ($, on) =>
 
   await $.tool.call(PUSH)
 
-  expect(await paneText($, /^ approved /)).toBe(' approved  git push --force origin main')
+  expect(await paneText($, /^ you approved /)).toBe(' you approved  git push --force origin main')
 })
 
 test('a held command whose call rejects shows DECLINED, and the error still propagates', async ($, on) => {
@@ -146,7 +146,7 @@ test('a held command whose call rejects shows DECLINED, and the error still prop
 
   await expect($.tool.call(PUSH)).rejects.toThrow('no implementation for tool.call')
 
-  expect(await paneText($, /^ declined /)).toBe(' declined  git push --force origin main')
+  expect(await paneText($, /^ you declined /)).toBe(' you declined  git push --force origin main')
 })
 
 test('a held command waits for you until the call settles', async ($, on) => {
@@ -161,7 +161,7 @@ test('a held command waits for you until the call settles', async ($, on) => {
   settle()
   await pending
 
-  expect(await paneText($, /^ approved /)).toBe(' approved  git push --force origin main')
+  expect(await paneText($, /^ you approved /)).toBe(' you approved  git push --force origin main')
 })
 
 test('a command that is only allowed gets no outcome', async ($, on) => {
@@ -320,7 +320,7 @@ test('a chain held on one part still shows DECLINED when the person says no', as
 
   await $.tool.call({ ...PUSH, command: CHAIN })
 
-  expect(await paneText($, /^ declined /, 80)).toBe(` declined  ${DELETE} (+2 steps)`)
+  expect(await paneText($, /^ you declined /, 80)).toBe(` you declined  ${DELETE} (+2 steps)`)
 })
 
 test('alwaysHeld names the catastrophic commands, and leaves ordinary ones alone', () => {

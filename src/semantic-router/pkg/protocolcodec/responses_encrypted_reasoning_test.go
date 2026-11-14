@@ -73,9 +73,9 @@ func TestResponsesOpaqueReasoningReachesTheClientWithNoReasoningText(t *testing.
 	encoder := (OpenAIResponsesCodec{}).NewEncoder(llmprotocol.StreamContext{}, llmprotocol.DefaultPolicy())
 	var stream strings.Builder
 	for _, event := range events {
-		frames, _, err := encoder.Push(event)
-		if err != nil {
-			t.Fatal(err)
+		frames, _, pushErr := encoder.Push(event)
+		if pushErr != nil {
+			t.Fatal(pushErr)
 		}
 		for _, frame := range frames {
 			stream.Write(frame)
@@ -95,8 +95,8 @@ func TestResponsesOpaqueReasoningReachesTheClientWithNoReasoningText(t *testing.
 			continue
 		}
 		var frame map[string]any
-		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &frame); err != nil {
-			t.Fatal(err)
+		if decodeErr := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &frame); decodeErr != nil {
+			t.Fatal(decodeErr)
 		}
 		if item := frame["item"].(map[string]any); item["type"] == "reasoning" {
 			done = item

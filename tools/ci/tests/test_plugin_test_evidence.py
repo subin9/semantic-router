@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from workflow_evidence import plugin_test_cases  # noqa: E402
+from workflow_evidence import plugin_test_cases
 
 REPORT = """\
 hooks/guard.test.tsx:

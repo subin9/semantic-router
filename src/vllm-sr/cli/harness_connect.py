@@ -296,8 +296,9 @@ def codex_catalog(
     every bundled entry and adds model: this Codex's CODEX_CATALOG_BASE entry
     under the model's name, without tool search, which the Router does not
     serve, without apply_patch as a custom tool, which a Messages backend
-    refuses, and with the reasoning and verbosity of Codex's fallback (a
-    summary, no effort, no verbosity). Empty when Codex knows model already, so
+    refuses, with the reasoning and verbosity of Codex's fallback (a summary,
+    no effort, no verbosity), and with no migration target or service tiers,
+    which belong to the bundled model. Empty when Codex knows model already, so
     its own entry stays in force; None when bundled holds no base entry."""
     models = bundled.get("models") if isinstance(bundled, dict) else None
     models = [entry for entry in models or [] if isinstance(entry, dict)]
@@ -317,6 +318,9 @@ def codex_catalog(
         "default_reasoning_summary": "auto",
         "support_verbosity": False,
         "default_verbosity": None,
+        "upgrade": None,
+        "service_tiers": [],
+        "additional_speed_tiers": [],
     }
     if context_window:
         entry |= {

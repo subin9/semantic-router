@@ -535,7 +535,8 @@ replaces Codex's own catalog, so it holds the installed Codex's bundled entries
 (from `codex debug models --bundled`) and adds one for the model: the `gpt-5.5`
 entry under the model's name, with tool search and the `apply_patch` custom
 tool turned off, since the Router does not serve the first and a Messages
-backend refuses the second, and with Codex's fallback reasoning settings.
+backend refuses the second, with Codex's fallback reasoning settings, and
+without `gpt-5.5`'s upgrade prompt and Fast tier, which belong to that model.
 Codex then edits files through its shell. A model Codex already knows, such as
 `--model gpt-5.5`, keeps its own entry, and no catalog is written. A Codex that
 bundles no `gpt-5.5` entry gets no catalog and keeps the warning. Run `vllm-sr connect codex` again after

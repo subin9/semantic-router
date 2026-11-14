@@ -1040,6 +1040,9 @@ BUNDLED_GPT_55 = {
     "apply_patch_tool_type": "freeform",
     "context_window": 272000,
     "max_context_window": 272000,
+    "upgrade": {"model": "gpt-6-sol", "migration_markdown": "Meet GPT-6 Sol"},
+    "service_tiers": [{"id": "priority", "name": "Fast"}],
+    "additional_speed_tiers": ["fast"],
 }
 
 
@@ -1141,6 +1144,9 @@ def test_codex_gets_a_catalog_entry_for_the_gateway_model(
                 "default_reasoning_summary": "auto",
                 "support_verbosity": False,
                 "default_verbosity": None,
+                "upgrade": None,
+                "service_tiers": [],
+                "additional_speed_tiers": [],
                 "context_window": 65536,
                 "max_context_window": 65536,
             },

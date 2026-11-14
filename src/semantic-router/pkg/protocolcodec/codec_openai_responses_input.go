@@ -318,12 +318,17 @@ func decodeResponsesReasoningItem(item responsesItemWire, request *llmprotocol.R
 	if err != nil {
 		return err
 	}
-	content = append(content, reasoning...)
-	if len(content) == 0 && len(item.EncryptedContent) > 0 {
-		// The provider blob was the item's only payload and the Router does not
-		// relay it, so the turn carries nothing a target can render. decode
-		// reported the omission; leave the empty turn out instead of rejecting
-		// the request the include path accepted.
+	for _, part := range reasoning {
+		if part.Text != "" {
+			content = append(content, part)
+		}
+	}
+	if len(content) == 0 && (len(item.EncryptedContent) > 0 || len(reasoning) > 0) {
+		// The provider blob, or reasoning with no text, was the item's only
+		// payload, so the turn carries nothing a target can render; an empty
+		// reasoning part sent on reaches an OpenAI target as plaintext reasoning,
+		// which it refuses. decode reported a dropped blob; leave the empty turn
+		// out instead of rejecting the request the include path accepted.
 		return nil
 	}
 	request.Messages = append(request.Messages, llmprotocol.Message{ID: item.ID, Role: llmprotocol.RoleAssistant, Content: content})

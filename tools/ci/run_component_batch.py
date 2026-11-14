@@ -70,6 +70,7 @@ def commands(target: str, output: Path) -> list[list[str]]:
         return [["make", "model-runtime-install"], ["make", target]]
     if target in {
         "vllm-sr-test",
+        "agent-plugins-test",
         "harness-check",
         "onnx-artifact-test",
         "test-training-contracts",

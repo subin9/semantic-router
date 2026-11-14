@@ -39,17 +39,29 @@ def plugin_test_cases(path: Path) -> list[dict]:
     """Cases from a `claude plugin test` report: each file's (pass)/(fail)/(skip)
     lines, which must add up to the run's own total."""
     cases, current, total = [], "", None
-    statuses = {"pass": "passed", "fail": "failed", "skip": "skipped", "todo": "skipped"}
+    statuses = {
+        "pass": "passed",
+        "fail": "failed",
+        "skip": "skipped",
+        "todo": "skipped",
+    }
     for raw in path.read_text().splitlines():
         line = ANSI.sub("", raw).strip()
         if match := PLUGIN_TEST_FILE.match(line):
             current = match.group(1)
         elif match := PLUGIN_TEST_CASE.match(line):
-            cases.append({"id": f"{current}::{match.group(2)}", "status": statuses[match.group(1)]})
+            cases.append(
+                {
+                    "id": f"{current}::{match.group(2)}",
+                    "status": statuses[match.group(1)],
+                }
+            )
         elif match := PLUGIN_TEST_TOTAL.match(line):
             total = int(match.group(1))
     if total is None or len(cases) != total:
-        raise ValueError(f"incomplete plugin test report: {len(cases)} cases, total {total}: {path}")
+        raise ValueError(
+            f"incomplete plugin test report: {len(cases)} cases, total {total}: {path}"
+        )
     if len({case["id"] for case in cases}) != len(cases):
         raise ValueError(f"plugin test report names a case twice: {path}")
     return cases

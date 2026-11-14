@@ -35,10 +35,22 @@ class PluginTestEvidenceTests(unittest.TestCase):
         self.assertEqual(
             self.cases(REPORT),
             [
-                {"id": "hooks/guard.test.tsx::a risky command is held", "status": "passed"},
-                {"id": "hooks/guard.test.tsx::a held command waits for the person", "status": "skipped"},
-                {"id": "hooks/view.test.tsx::a risky command is held", "status": "passed"},
-                {"id": "hooks/view.test.tsx::the file ran to its end", "status": "failed"},
+                {
+                    "id": "hooks/guard.test.tsx::a risky command is held",
+                    "status": "passed",
+                },
+                {
+                    "id": "hooks/guard.test.tsx::a held command waits for the person",
+                    "status": "skipped",
+                },
+                {
+                    "id": "hooks/view.test.tsx::a risky command is held",
+                    "status": "passed",
+                },
+                {
+                    "id": "hooks/view.test.tsx::the file ran to its end",
+                    "status": "failed",
+                },
             ],
         )
 

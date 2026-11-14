@@ -67,7 +67,9 @@ def commands(target: str, output: Path) -> list[list[str]]:
     if target == "test-e2e-unit":
         return [["make", target, f"E2E_UNIT_REPORT_DIR={output}"]]
     if target == "agent-plugins-test":
-        return [["make", target, f"AGENT_PLUGINS_TEST_REPORT={output / 'plugin-tests.log'}"]]
+        return [
+            ["make", target, f"AGENT_PLUGINS_TEST_REPORT={output / 'plugin-tests.log'}"]
+        ]
     if target == "model-runtime-test":
         return [["make", "model-runtime-install"], ["make", target]]
     if target in {

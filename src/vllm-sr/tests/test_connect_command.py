@@ -1150,6 +1150,15 @@ def test_codex_gets_a_catalog_entry_for_the_gateway_model(
     assert CliRunner().invoke(main, ["connect", "codex", "--undo"]).exit_code == 0
     assert not catalog.exists()
 
+    # a model this Codex knows keeps its own entry: no catalog, no warning
+    result = CliRunner().invoke(
+        main, [*args, "--model", "gpt-5.5", "--no-vsr", "--yes"]
+    )
+    assert result.exit_code == 0, result.output
+    assert not catalog.exists()
+    assert "model_catalog_json" not in (tmp_path / "vllm-sr.config.toml").read_text()
+    assert "does not know" not in result.output
+
     monkeypatch.setattr("shutil.which", lambda _: None)
     result = CliRunner().invoke(main, [*args, "--no-vsr", "--yes"])
     assert result.exit_code == 0, result.output

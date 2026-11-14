@@ -297,9 +297,12 @@ def codex_catalog(
     under the model's name, without tool search, which the Router does not
     serve, without apply_patch as a custom tool, which a Messages backend
     refuses, and with the reasoning and verbosity of Codex's fallback (a
-    summary, no effort, no verbosity). None when bundled holds no such entry."""
+    summary, no effort, no verbosity). Empty when Codex knows model already, so
+    its own entry stays in force; None when bundled holds no base entry."""
     models = bundled.get("models") if isinstance(bundled, dict) else None
     models = [entry for entry in models or [] if isinstance(entry, dict)]
+    if any(m.get("slug") == model for m in models):
+        return {}
     base = next((m for m in models if m.get("slug") == CODEX_CATALOG_BASE), None)
     if base is None:
         return None
@@ -320,7 +323,7 @@ def codex_catalog(
             "context_window": context_window,
             "max_context_window": context_window,
         }
-    return {"models": [*(m for m in models if m.get("slug") != model), entry]}
+    return {"models": [*models, entry]}
 
 
 def codex_settings(

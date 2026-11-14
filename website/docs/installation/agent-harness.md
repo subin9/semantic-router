@@ -536,8 +536,9 @@ replaces Codex's own catalog, so it holds the installed Codex's bundled entries
 entry under the model's name, with tool search and the `apply_patch` custom
 tool turned off, since the Router does not serve the first and a Messages
 backend refuses the second, and with Codex's fallback reasoning settings.
-Codex then edits files through its shell. A Codex that bundles no such entry
-gets no catalog and keeps the warning. Run `vllm-sr connect codex` again after
+Codex then edits files through its shell. A model Codex already knows, such as
+`--model gpt-5.5`, keeps its own entry, and no catalog is written. A Codex that
+bundles no `gpt-5.5` entry gets no catalog and keeps the warning. Run `vllm-sr connect codex` again after
 updating Codex, so the catalog follows its release. `vllm-sr connect` also sets
 `model_context_window` and the entry's window from the configuration, or from
 `--context-window`, so the budget follows your backends.

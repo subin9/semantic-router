@@ -299,7 +299,7 @@ def codex(
             token,
             notes,
             dry_run,
-            catalog,
+            catalog or None,
         )
     catalog_path = home / f"{profile}.models.json" if catalog else None
     change = hc.codex_change(
@@ -342,7 +342,7 @@ def codex(
             f"{found} sets model, which Codex asks for instead of {model} once it trusts"
             " this project. Remove it there, or start with --launch."
         )
-    if not catalog:
+    if catalog is None:
         echo(
             f"Codex does not know {model}, so it warns that it falls back to default"
             f" model metadata: this Codex bundles no {hc.CODEX_CATALOG_BASE} entry to"

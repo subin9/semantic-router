@@ -1106,7 +1106,7 @@ def test_launch_starts_the_harness_through_the_gateway_and_writes_nothing(
     assert overrides["model_providers.vllm-sr.env_key"] == '"VLLM_SR_API_KEY"'
     assert overrides["model_context_window"] == "65536"
     assert ran["key"] == "sk-secret" and "sk-secret" not in " ".join(ran["args"])
-    assert ran["catalog"]["models"][0]["slug"] == "vllm-sr/auto"
+    assert [m["slug"] for m in ran["catalog"]["models"]] == ["gpt-5.5", "vllm-sr/auto"]
     assert not home.exists()
 
 
@@ -1124,10 +1124,12 @@ def test_codex_gets_a_catalog_entry_for_the_gateway_model(
         f"model_catalog_json = {json.dumps(str(catalog))}"
         in (tmp_path / "vllm-sr.config.toml").read_text()
     )
-    # this Codex's own gpt-5.5 entry under the gateway model's name, with what the
-    # Router cannot serve turned off, so Codex has metadata and does not warn
+    # every bundled entry, since the file replaces Codex's catalog, and this Codex's
+    # own gpt-5.5 entry under the gateway model's name, with what the Router cannot
+    # serve turned off, so Codex has metadata and does not warn
     assert json.loads(catalog.read_text()) == {
         "models": [
+            BUNDLED_GPT_55,
             {
                 **BUNDLED_GPT_55,
                 "slug": "vllm-sr/auto",
@@ -1141,7 +1143,7 @@ def test_codex_gets_a_catalog_entry_for_the_gateway_model(
                 "default_verbosity": None,
                 "context_window": 65536,
                 "max_context_window": 65536,
-            }
+            },
         ]
     }
     assert "does not know" not in result.output

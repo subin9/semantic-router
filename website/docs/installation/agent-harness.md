@@ -530,12 +530,15 @@ the variable it names is unset, and `vllm-sr connect` writes it only when
 
 Codex does not know `vllm-sr/auto`, so without a catalog entry for it, it warns
 that it uses fallback model metadata. `vllm-sr connect` writes one next to the
-profile, `vllm-sr.models.json`, named by `model_catalog_json`: the installed
-Codex's own `gpt-5.5` entry (from `codex debug models --bundled`) under the
-model's name, with tool search and the `apply_patch` custom tool turned off,
-since the Router does not serve the first and a Messages backend refuses the
-second. Codex then edits files through its shell. A Codex that bundles no such
-entry gets no catalog and keeps the warning. `vllm-sr connect` also sets
+profile, `vllm-sr.models.json`, named by `model_catalog_json`. The file
+replaces Codex's own catalog, so it holds the installed Codex's bundled entries
+(from `codex debug models --bundled`) and adds one for the model: the `gpt-5.5`
+entry under the model's name, with tool search and the `apply_patch` custom
+tool turned off, since the Router does not serve the first and a Messages
+backend refuses the second, and with Codex's fallback reasoning settings.
+Codex then edits files through its shell. A Codex that bundles no such entry
+gets no catalog and keeps the warning. Run `vllm-sr connect codex` again after
+updating Codex, so the catalog follows its release. `vllm-sr connect` also sets
 `model_context_window` and the entry's window from the configuration, or from
 `--context-window`, so the budget follows your backends.
 

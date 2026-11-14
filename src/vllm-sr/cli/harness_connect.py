@@ -292,20 +292,15 @@ def codex_catalog(
     bundled: Any, model: str, context_window: int | None
 ) -> dict[str, Any] | None:
     """A Codex model catalog holding model, so Codex does not fall back to
-    default metadata and warn: this Codex's own CODEX_CATALOG_BASE entry under
-    the model's name, without tool search, which the Router does not serve,
-    without apply_patch as a custom tool, which a Messages backend refuses, and
-    with the reasoning and verbosity of Codex's fallback (a summary, no effort,
-    no verbosity). None when bundled holds no such entry."""
+    default metadata and warn. A catalog file replaces Codex's own, so it keeps
+    every bundled entry and adds model: this Codex's CODEX_CATALOG_BASE entry
+    under the model's name, without tool search, which the Router does not
+    serve, without apply_patch as a custom tool, which a Messages backend
+    refuses, and with the reasoning and verbosity of Codex's fallback (a
+    summary, no effort, no verbosity). None when bundled holds no such entry."""
     models = bundled.get("models") if isinstance(bundled, dict) else None
-    base = next(
-        (
-            entry
-            for entry in models or []
-            if isinstance(entry, dict) and entry.get("slug") == CODEX_CATALOG_BASE
-        ),
-        None,
-    )
+    models = [entry for entry in models or [] if isinstance(entry, dict)]
+    base = next((m for m in models if m.get("slug") == CODEX_CATALOG_BASE), None)
     if base is None:
         return None
     entry = {
@@ -325,7 +320,7 @@ def codex_catalog(
             "context_window": context_window,
             "max_context_window": context_window,
         }
-    return {"models": [entry]}
+    return {"models": [*(m for m in models if m.get("slug") != model), entry]}
 
 
 def codex_settings(

@@ -1,6 +1,7 @@
 package protocolcodec
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -85,6 +86,38 @@ func TestResponsesOpaqueReasoningReachesTheClientWithNoReasoningText(t *testing.
 	}
 	if !strings.Contains(stream.String(), `"type":"reasoning"`) {
 		t.Fatalf("the reasoning item itself is missing:\n%s", stream.String())
+	}
+	// The client sends the completed item back as it got it; the next turn
+	// decodes and reaches the target without it.
+	var done map[string]any
+	for _, line := range strings.Split(stream.String(), "\n") {
+		if !strings.HasPrefix(line, "data: ") || !strings.Contains(line, `"response.output_item.done"`) {
+			continue
+		}
+		var frame map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &frame); err != nil {
+			t.Fatal(err)
+		}
+		if item := frame["item"].(map[string]any); item["type"] == "reasoning" {
+			done = item
+		}
+	}
+	replayed, err := json.Marshal([]any{done, map[string]any{
+		"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "more"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, _, _, err := NewBuiltinEngine().DecodeRequest(llmprotocol.OpenAIResponsesV1, []byte(`{"model":"m","input":`+string(replayed)+`}`))
+	if err != nil {
+		t.Fatalf("replaying the completed reasoning item: %v", err)
+	}
+	body, _, err := (OpenAIResponsesCodec{}).EncodeRequest(request, llmprotocol.Envelope{}, llmprotocol.DefaultPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), `"reasoning"`) {
+		t.Fatalf("the empty reasoning item reached the target: %s", body)
 	}
 }
 

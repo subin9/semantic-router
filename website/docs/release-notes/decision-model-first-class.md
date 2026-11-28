@@ -12,7 +12,7 @@ embedding-similarity trick. v0.5 makes the decision model first-class:
 
 - **Signals have three layers:** the `systemone` primitive for questions you
   write; eleven application signals, each compiled into one `systemone`
-  question; and seven deterministic heuristics.
+  question; and eight deterministic heuristics.
 - **Zero-shot everywhere.** Every System One model answers every question it
   supports zero-shot; trained adapters and calibrated thresholds are
   per-family optimizations. Models differ in the question types they answer:

@@ -14,6 +14,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/decision"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/fallback"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/looper"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/masking"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/modelruntime/tasks"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/modelservice"
@@ -96,25 +97,28 @@ type RequestContext struct {
 	CacheExactFingerprint         string
 	CacheCompatibilityFingerprint string
 	CacheIdentity                 cache.CacheIdentity
-	CacheSelectedModel            string
-	CacheSemanticSafe             bool
-	CacheReadBypass               bool
-	CacheWriteBypass              bool
-	CacheMaxAgeSeconds            *int
-	CacheWriteTTLSeconds          *int
-	ContextCompressionApplied     bool
-	ContextCompressionBefore      int
-	ContextCompressionAfter       int
-	ContextCompressionMessages    int
-	ContextCompressionFormat      string
-	ContextCompressionOmitted     int
-	ContextCompressionSkipReason  string
-	StartTime                     time.Time
-	ProcessingStartTime           time.Time
-	RoutingLatency                time.Duration
-	RequestCost                   float64
-	RequestCostCurrency           string
-	RequestCostPriced             bool
+	// CacheLease is the lookup's singleflight lease; Process releases it when
+	// the request ends, unless a store completed its key first.
+	CacheLease                   cache.SingleflightLease
+	CacheSelectedModel           string
+	CacheSemanticSafe            bool
+	CacheReadBypass              bool
+	CacheWriteBypass             bool
+	CacheMaxAgeSeconds           *int
+	CacheWriteTTLSeconds         *int
+	ContextCompressionApplied    bool
+	ContextCompressionBefore     int
+	ContextCompressionAfter      int
+	ContextCompressionMessages   int
+	ContextCompressionFormat     string
+	ContextCompressionOmitted    int
+	ContextCompressionSkipReason string
+	StartTime                    time.Time
+	ProcessingStartTime          time.Time
+	RoutingLatency               time.Duration
+	RequestCost                  float64
+	RequestCostCurrency          string
+	RequestCostPriced            bool
 	// spend is the request's place in the spend budgets; nil without any.
 	spend *requestSpend
 	// Streaming detection
@@ -244,6 +248,7 @@ type RequestContext struct {
 	VSRSelectedDecisionConfidence       float64                                     // Confidence score from DecisionEngine evaluation
 	VSRSelectedDecisionConfidenceScored bool                                        // False for structural and error-policy matches without model scores
 	VSRReasoningMode                    string                                      // "on" or "off" - whether reasoning mode was determined to be used
+	VSRReasoningReason                  string                                      // Why VSRReasoningMode is not the decision's choice, such as "output_budget"
 	VSRSelectedModel                    string                                      // The model selected by VSR
 	VSRSelectionMethod                  string                                      // Model selection algorithm used (e.g., "static", "systemone", "escalate")
 	VSRSelectionReasoning               string                                      // Bounded human-readable selector rationale for replay
@@ -292,6 +297,8 @@ type RequestContext struct {
 	// fallbackExecutedByCaller is set when the native gateway runs the
 	// request's fallback chain; the response phases then never fall back.
 	fallbackExecutedByCaller bool
+	// nativeFallbackResponse awaits validation after a candidate's 2xx headers.
+	nativeFallbackResponse *nativeFallbackResponse
 	// fallbackLastFailure is the last fallback candidate's failed upstream
 	// answer; a chain that ends without a success answers the client with it.
 	fallbackLastFailure *failedAttempt
@@ -319,6 +326,16 @@ type RequestContext struct {
 
 	// Selection stages ownership; only a validated provider continuation commits it.
 	pendingSessionDecision *sessiontelemetry.SessionDecisionParams
+	// protectionKeyApart marks a request protection holds under a key of its
+	// own in the session: a subagent's or a side request's.
+	protectionKeyApart bool
+	// dispatchReasoningMode and dispatchReasoningEffort are the reasoning the
+	// request's provider dispatch carried; empty while nothing was sent.
+	dispatchReasoningMode   string
+	dispatchReasoningEffort string
+	// committedSessionDecision is the ownership the dispatch committed, which a
+	// fallback candidate that answers takes over.
+	committedSessionDecision *sessiontelemetry.SessionDecisionParams
 
 	// ResponsePath records how the final response was produced, surfaced as the
 	// v0.4 keystone x-vsr-response-path header (one of the headers.ResponsePath*
@@ -382,8 +399,12 @@ type RequestContext struct {
 	// the answer, nil until it ran.
 	ResponseGuard *responseGuardRun
 	// ResponseGuardHold is the streamed answer the Router holds until the
-	// guard has read all of it, nil for an answer it does not hold.
-	ResponseGuardHold      *responseGuardHold
+	// guard has read all of it, or until the structured output pass knows
+	// the answer; nil for an answer it does not hold.
+	ResponseGuardHold *responseGuardHold
+	// structuredOutputPass is the turn whose output format the primary
+	// dispatch held back while its tools were callable; nil for any other.
+	structuredOutputPass   *structuredOutputPass
 	VSRDecisionDiagnostics decision.EvaluationDiagnostics
 	VSRProjectionTrace     *projectiontrace.Trace
 
@@ -459,6 +480,12 @@ type RequestContext struct {
 	// only, like ApprovalReview.
 	SessionTitleRequest bool
 	sessionName         string
+	// cancelAbandonedWork stops request-scoped background work if the response
+	// ends early. Completed responses allow that work to finish on its own.
+	cancelAbandonedWork      context.CancelFunc
+	responseComplete         bool
+	bufferedResponseComplete bool
+
 	// Looper context
 	LooperRequest   bool                  // True only for a request-graph hop: in process, or token-authenticated
 	Hop             *routing.Hop          // The routing context of a hop served in process
@@ -469,11 +496,25 @@ type RequestContext struct {
 	LooperTrace *looperTrace
 	// ToolsSelection is what the tools plugin's selection did, for
 	// x-vsr-trace.
-	ToolsSelection *toolsSelection
+	ToolsSelection            *toolsSelection
+	LooperStreamingActive     bool              // True when a native streaming final stage is dispatched through Envoy
+	LooperTargetModel         string            // Physical target model executing the streamed final stage
+	LooperSynthesisTextBytes  int               // Semantic text bytes of the dispatched synthesis request for token calibration
+	LooperIntermediateUsage   looper.TokenUsage // Token usage accumulated from intermediate panel/analysis stages
+	LooperExecutionTrace      any               // Execution trace from intermediate stages (e.g. *looper.FusionTrace, *workflowTrace, []RoundResponse)
+	LooperModelsUsed          []string          // All model identifiers dispatched across intermediate and final streaming stages
+	LooperIterations          int               // Total looper call/iteration count including dispatched final streaming stage
+	LooperAuditedOutputTokens int               // Estimated output tokens audited from SSE deltas before disconnect
+	LooperUsageSettled        bool              // True once terminal or aborted Looper streaming usage has been settled
 
 	// ListenerModels, when set, are the only request models the listener the
 	// client request arrived on accepts.
 	ListenerModels routing.ListenerModels
+	// UnservedModelRoute, when set, is the model a request naming a model
+	// the listener does not accept or the Router does not serve is routed
+	// as, and RequestedModel the name such a request gave.
+	UnservedModelRoute string
+	RequestedModel     string
 
 	// SourceFormat and SemanticRequest are the authoritative public protocol
 	// contract and neutral request.
@@ -538,6 +579,13 @@ type RequestContext struct {
 	// RequestAutoStore snapshots the client's memory persistence override before
 	// provider preparation removes router controls. Nil uses configured defaults.
 	RequestAutoStore *bool
+	// unstatedReasoningOutputLimit snapshots the output limit of a client
+	// request that states no reasoning preference, before dispatch sets the
+	// reasoning controls; see outputBudgetTurnsReasoningOff.
+	unstatedReasoningOutputLimit *int64
+	// unstatedReasoningStopSequences snapshots whether such a request sets
+	// stop sequences; see stopSequencesTurnReasoningOff.
+	unstatedReasoningStopSequences bool
 
 	ContextCompressionTargetTokens *int
 	ContextCompressionRecoveryKeys []string

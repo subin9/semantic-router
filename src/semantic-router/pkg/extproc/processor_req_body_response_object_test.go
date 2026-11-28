@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 
 	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
@@ -131,26 +132,23 @@ func TestPrepareObjectStateRejectsUnavailableAndMissingPreviousResponse(t *testi
 }
 
 // TestPrepareObjectStateConversationMembershipIsStrictlyExplicit covers the
-// three ConversationID/SessionTrackingID sources: explicit conversation_id
-// (external membership + a namespaced tracking id), previous_response_id
+// ConversationID/SessionTrackingID sources: a conversation, which the Router
+// refuses because it keeps no Conversations objects; previous_response_id
 // only (lineage: no membership, but tracking continuity is preserved via a
-// separate internal key), and neither field (standalone: no membership, a
+// separate internal key); and neither field (standalone: no membership, a
 // fresh tracking id). Conversation and lineage must never blend: a
 // previous_response_id-only continuation of a conversation-tagged response
 // must not inherit that conversation's ID (see issue #2999 discussion on
 // why chain-only forks must not silently join a Conversation's history).
 func TestPrepareObjectStateConversationMembershipIsStrictlyExplicit(t *testing.T) {
-	t.Run("explicit conversation_id is external membership and namespaces the tracking id", func(t *testing.T) {
-		filter := NewResponseAPIFilter(NewMockResponseStore())
-		state, err := filter.PrepareObjectState(t.Context(), llmprotocol.Request{ConversationID: "conv_y"}, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if state.ConversationID != "conv_y" {
-			t.Fatalf("ConversationID = %q, want explicit value", state.ConversationID)
-		}
-		if state.SessionTrackingID != "respapi:conversation:conv_y" {
-			t.Fatalf("SessionTrackingID = %q", state.SessionTrackingID)
+	t.Run("a conversation is refused with or without a store", func(t *testing.T) {
+		for _, filter := range []*ResponseAPIFilter{nil, NewResponseAPIFilter(NewMockResponseStore())} {
+			state, err := filter.PrepareObjectState(t.Context(), llmprotocol.Request{ConversationID: "conv_y"}, nil)
+			assertResponseObjectStateError(t, err, llmprotocol.ErrorUnsupportedFeature, "unsupported_conversation")
+			var protocolError *llmprotocol.ProtocolError
+			if !errors.As(err, &protocolError) || protocolError.Parameter != "conversation" || state != nil {
+				t.Fatalf("error = %v, state = %+v; want the conversation named", err, state)
+			}
 		}
 	})
 
@@ -476,9 +474,10 @@ func TestMaterializeResponseObjectContextRejectsBrokenRetainedToolLifecycleAtomi
 	}
 }
 
-// previous_response_id replays the stored developer and system input items as
-// instructions in turn order: after the current request's top-level
-// instructions and before the developer items of its own input. The earlier
+// previous_response_id replays the developer and system items at the start of
+// the stored input as instructions, after the current request's top-level
+// instructions. The current input follows the stored turns, so its developer
+// items stay in their place there, at its start or later. The earlier
 // request's top-level instructions are not carried over.
 func TestPreviousResponseReplaysStoredDeveloperItems(t *testing.T) {
 	for _, backend := range []llmprotocol.WireFormat{llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1, llmprotocol.AnthropicMessagesV1} {
@@ -493,22 +492,71 @@ func TestPreviousResponseReplaysStoredDeveloperItems(t *testing.T) {
 				t.Fatalf("turn 1 reply was replaced: %s", reply.GetImmediateResponse().GetBody())
 			}
 
-			turnOrder := []string{"Always answer in French.", "Now answer in digits.", "What is 2+2?", "hello", "And 3+3?"}
-			for _, instructions := range []string{`"instructions":"Be brief.",`, ""} {
-				second := &RequestContext{Headers: map[string]string{}, SourceFormat: llmprotocol.OpenAIResponsesV1, RequestID: "turn-2", TraceContext: t.Context()}
-				body := dispatchTestTurn(t, router, model, second, `{"model":"`+model+`",`+instructions+`"previous_response_id":"`+
-					first.ResponseObjectState.GeneratedResponseID+`","input":[{"type":"message","role":"developer","content":"Now answer in digits."},`+
-					`{"type":"message","role":"user","content":"And 3+3?"}]}`)
-				want := turnOrder
-				if instructions != "" {
-					want = append([]string{"Be brief."}, turnOrder...)
-				}
-				assertTextOrder(t, body, want...)
-				if bytes.Contains(body, []byte("Old instructions.")) {
-					t.Fatalf("top-level instructions of the earlier request were carried over: %s", body)
+			const developer = `{"type":"message","role":"developer","content":"Now answer in digits."}`
+			const user = `{"type":"message","role":"user","content":"And 3+3?"}`
+			for _, input := range []struct {
+				items string
+				order []string
+			}{
+				{`{"type":"reasoning","id":"rs_empty","encrypted_content":""},` + developer + "," + user, []string{"Always answer in French.", "What is 2+2?", "hello", "Now answer in digits.", "And 3+3?"}},
+				{developer + "," + user, []string{"Always answer in French.", "What is 2+2?", "hello", "Now answer in digits.", "And 3+3?"}},
+				{user + "," + developer, []string{"Always answer in French.", "What is 2+2?", "hello", "And 3+3?", "Now answer in digits."}},
+			} {
+				for _, instructions := range []string{`"instructions":"Be brief.",`, `"instructions":"",`, `"instructions":null,`, ""} {
+					second := &RequestContext{Headers: map[string]string{}, SourceFormat: llmprotocol.OpenAIResponsesV1, RequestID: "turn-2", TraceContext: t.Context()}
+					body := dispatchTestTurn(t, router, model, second, `{"model":"`+model+`",`+instructions+`"previous_response_id":"`+
+						first.ResponseObjectState.GeneratedResponseID+`","input":[`+input.items+`]}`)
+					want := input.order
+					if instructions == `"instructions":"Be brief.",` {
+						want = append([]string{"Be brief."}, input.order...)
+					}
+					assertTextOrder(t, body, want...)
+					if bytes.Contains(body, []byte("Old instructions.")) {
+						t.Fatalf("top-level instructions of the earlier request were carried over: %s", body)
+					}
 				}
 			}
 		})
+	}
+}
+
+// With messages[].role listed, a Chat backend receives the instructions that
+// lead the retained conversation as one system message, and the developer
+// item of the current input as user text after the history it follows.
+func TestPreviousResponseSendsTheCurrentDeveloperItemsInPlace(t *testing.T) {
+	router, model := routingTestRouterForFormat(llmprotocol.OpenAIChatV1)
+	router.Config.AllowLossyTranslation = []string{llmprotocol.LossyFieldSystemMessageRole}
+	router.ResponseAPIFilter = NewResponseAPIFilter(NewMockResponseStore())
+	first := &RequestContext{Headers: map[string]string{}, SourceFormat: llmprotocol.OpenAIResponsesV1, RequestID: "turn-1", TraceContext: t.Context()}
+	dispatchTestTurn(t, router, model, first, `{"model":"`+model+`","instructions":"Old instructions.","input":[`+
+		`{"type":"message","role":"developer","content":"Always answer in French."},`+
+		`{"type":"message","role":"user","content":"What is 2+2?"}]}`)
+	if reply := router.handleNonStreamingResponseBody(extProcResponseFixture(llmprotocol.OpenAIChatV1), first, 0, false); reply.GetImmediateResponse() != nil {
+		t.Fatalf("turn 1 reply was replaced: %s", reply.GetImmediateResponse().GetBody())
+	}
+	second := &RequestContext{Headers: map[string]string{}, SourceFormat: llmprotocol.OpenAIResponsesV1, RequestID: "turn-2", TraceContext: t.Context()}
+	body := dispatchTestTurn(t, router, model, second, `{"model":"`+model+`","instructions":"Be brief.","previous_response_id":"`+
+		first.ResponseObjectState.GeneratedResponseID+`","input":[{"type":"message","role":"developer","content":"Now answer in digits."},`+
+		`{"type":"message","role":"user","content":"And 3+3?"}]}`)
+	var sent struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &sent); err != nil {
+		t.Fatalf("%v: %s", err, body)
+	}
+	var got []string
+	for _, message := range sent.Messages {
+		got = append(got, message.Role+": "+message.Content)
+	}
+	want := []string{
+		"system: Be brief.\n\nAlways answer in French.", "user: What is 2+2?", "assistant: hello",
+		"user: Now answer in digits.", "user: And 3+3?",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("backend conversation = %q, want %q", got, want)
 	}
 }
 

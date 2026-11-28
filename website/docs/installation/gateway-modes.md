@@ -80,6 +80,25 @@ See the [release note](../release-notes/standalone-mode).
         key_file: certs/tls.key
   ```
 
+  For automatic renewal with `vllm-sr serve --target docker`, place the
+  certificate and key in dedicated directories and list their exact parent
+  directories in `VLLM_SR_LISTENER_TLS_DIRS` on the host. Use `:` to separate
+  multiple directories on Linux, macOS, and WSL. Relative directory entries
+  resolve from the source config's directory.
+
+  ```bash
+  VLLM_SR_LISTENER_TLS_DIRS=/etc/vllm-sr/certs:/etc/vllm-sr/keys \
+    vllm-sr serve --target docker --gateway standalone --config config.yaml
+  ```
+
+  The Router can read the entire contents of each mounted directory. The
+  `:z` mount option recursively relabels those directories on SELinux hosts.
+  Keep the directories in place and ensure the Router can read the renewed
+  files. Files outside the listed directories, certificate or key symlinks,
+  and files directly under a filesystem root use per-file mounts. Older Router
+  images always use per-file mounts. Restart the stack after an atomic
+  replacement of any file on a per-file mount.
+
 - **The edge's trust boundary:** two kinds of client-sent headers never reach
   routing or a backend:
   - identity headers (`x-authz-*`, and the names
@@ -131,10 +150,12 @@ listeners:
   aliases are not expanded: list every name clients may send. Empty or absent,
   the listener accepts every model.
 - The check runs after the API key check and before any signal, cache or
-  decision, on the model the Router parsed for routing. Any other model,
-  including a provider model that would otherwise pass through, gets
-  `403` with `{"error": {"code": "model_not_allowed", ...}}` in the client's
-  protocol. A request without a model gets `400 model_required`.
+  decision, on the model the Router parsed for routing. Any other model the
+  Router serves, including a provider model that would otherwise pass
+  through, gets `403` with `{"error": {"code": "model_not_allowed", ...}}` in
+  the client's protocol. A model it serves on no listener gets `404`
+  `model_not_found`, as OpenAI SDKs expect. A request without a model gets
+  `400 model_required`.
 - `GET /v1/models` on the listener lists only the allowed names the catalog
   has.
 - The model calls a decision makes in process (Looper and request-graph hops)

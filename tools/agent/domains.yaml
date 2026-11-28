@@ -12,6 +12,7 @@ domains:
       - .github/copilot-instructions.md
       - .github/PULL_REQUEST_TEMPLATE.md
       - .github/ISSUE_TEMPLATE/**
+      - .github/actionlint.yaml
       - .github/actions/**
       - .github/workflows/**
       - .mergify.yml
@@ -36,7 +37,7 @@ domains:
       - README.md
       - CONTRIBUTING.md
       - website/**
-    checks: [make docs-check-translation-coverage]
+    checks: [make docs-check-translation-coverage, make docs-i18n-shell-test]
     verifications: []
 
   generated-model-catalog:
@@ -319,6 +320,7 @@ domains:
   calibration-tuning:
     owner: router-core
     paths:
+      - tools/recipe-lab/**
       - tools/calibration/recipe/**
       - tools/calibration/tuning/**
       - tools/calibration/systemone_auto/**
@@ -776,6 +778,14 @@ domains:
     checks: [make test-agent-crew]
     verifications: [bench-tools]
 
+  agent-kv-tier-bench:
+    owner: evaluation-quality
+    paths:
+      - bench/agent_kv_tier/**
+      - tools/make/tooling.mk
+    checks: [make test-agent-kv-tier-bench]
+    verifications: [bench-tools]
+
   paper:
     owner: paper
     paths: [paper/**]
@@ -804,6 +814,7 @@ domains:
       - tools/make/build-run-test.mk
       - tools/ci/run_core_tests.py
       - src/semantic-router/pkg/contextcompression/*redis*
+      - src/semantic-router/pkg/classification/classifier_signal_scan_verdicts*
       - src/semantic-router/pkg/responsestore/*redis*
       - src/semantic-router/pkg/routerreplay/store/*postgres*
       - src/semantic-router/pkg/postgres/**

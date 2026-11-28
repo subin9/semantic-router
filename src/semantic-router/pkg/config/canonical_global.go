@@ -41,6 +41,11 @@ type CanonicalRouterGlobal struct {
 	// AllowLossyTranslation names protocol losses translated with a warning
 	// instead of rejected. Every other loss keeps failing closed.
 	AllowLossyTranslation []string `yaml:"allow_lossy_translation,omitempty"`
+	// AllowRequestExtensionFields names top-level request members a wire
+	// format does not declare that the Router captures at ingress and merges
+	// back on same-format dispatch. Every member not listed keeps failing
+	// closed, and captured members never influence routing decisions.
+	AllowRequestExtensionFields []string `yaml:"allow_request_extension_fields,omitempty"`
 	// RoutingInput chooses the user text that routing reads.
 	RoutingInput RoutingInputConfig `yaml:"routing_input,omitempty"`
 	// Headers governs the optional response headers, such as who may turn on
@@ -85,7 +90,8 @@ type CanonicalStoreGlobal struct {
 	// ToolSessions configures session-scoped sticky tool-set selection's
 	// shared store (issue #3347). Optional and pointer-shaped like
 	// VectorStore: most deployments won't enable sticky selection at all.
-	ToolSessions *ToolSessionStoreConfig `yaml:"tool_sessions,omitempty"`
+	ToolSessions  *ToolSessionStoreConfig  `yaml:"tool_sessions,omitempty"`
+	GuardVerdicts *GuardVerdictStoreConfig `yaml:"guard_verdicts,omitempty"`
 }
 
 // CanonicalIntegrationGlobal groups external helper services used by the router.
@@ -240,6 +246,7 @@ func applyCanonicalRouterGlobal(cfg *RouterConfig, router CanonicalRouterGlobal)
 	cfg.RouterLearning = router.Learning
 	cfg.Fallback = router.Fallback.Clone()
 	cfg.AllowLossyTranslation = router.AllowLossyTranslation
+	cfg.AllowRequestExtensionFields = router.AllowRequestExtensionFields
 	cfg.RoutingInput = router.RoutingInput
 	cfg.Headers = router.Headers
 	cfg.ContextWindow = router.ContextWindow
@@ -264,6 +271,7 @@ func applyCanonicalStoreGlobal(cfg *RouterConfig, stores CanonicalStoreGlobal) {
 	cfg.Memory = stores.Memory
 	cfg.VectorStore = stores.VectorStore
 	cfg.ToolSessions = stores.ToolSessions
+	cfg.GuardVerdicts = stores.GuardVerdicts
 }
 
 func applyCanonicalIntegrationGlobal(cfg *RouterConfig, integrations CanonicalIntegrationGlobal) {

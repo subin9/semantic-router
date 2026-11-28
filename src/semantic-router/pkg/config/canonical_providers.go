@@ -16,6 +16,12 @@ type CanonicalProviders struct {
 type CanonicalProviderDefaults struct {
 	DefaultModel           string `yaml:"model,omitempty"`
 	DefaultReasoningEffort string `yaml:"reasoning_effort,omitempty"`
+	// ReasoningMinOutputTokens is the smallest output limit a request keeps its
+	// decision's reasoning at. A backend counts reasoning against the limit, so
+	// a request that states no reasoning preference and sets a smaller one
+	// runs with the model's reasoning off; the client's own preference always
+	// wins. Unset or 0 keeps every request's reasoning as its decision chose.
+	ReasoningMinOutputTokens int `yaml:"reasoning_min_output_tokens,omitempty" jsonschema:"minimum=0"`
 	// TLS is the trust of every https backend whose own tls names no CA.
 	TLS *ProviderDefaultsTLS `yaml:"tls,omitempty"`
 }
@@ -34,7 +40,7 @@ type CanonicalProviderModel struct {
 	Pricing         ModelPricing          `yaml:"pricing,omitempty"`
 	Reliability     ProviderReliability   `yaml:"reliability,omitempty"`
 	// APIFormat is the API the model's backends serve, by API name:
-	// chat_completions (the default), responses, messages, images or
+	// chat_completions (the default), responses, messages, images, speech or
 	// systemone. openai and anthropic are accepted as aliases of
 	// chat_completions and messages.
 	APIFormat string `yaml:"api_format,omitempty"`

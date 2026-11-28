@@ -261,7 +261,9 @@ func decodeResponsesMessageItem(item responsesItemWire, request *llmprotocol.Req
 	if err != nil {
 		return err
 	}
-	if role == llmprotocol.RoleSystem || role == llmprotocol.RoleDeveloper {
+	// System and developer items before the conversation lead the request. A
+	// later one applies from where the client put it, so it stays in place.
+	if (role == llmprotocol.RoleSystem || role == llmprotocol.RoleDeveloper) && len(request.Messages) == 0 {
 		request.Instructions = append(request.Instructions, llmprotocol.InstructionBlock{Role: role, Content: content})
 	} else {
 		request.Messages = append(request.Messages, llmprotocol.Message{ID: item.ID, Role: role, Content: content})
@@ -731,7 +733,7 @@ func decodeResponsesObjectToolChoice(raw json.RawMessage, policy llmprotocol.Pol
 		return llmprotocol.ToolChoice{}, llmprotocol.NewError(
 			llmprotocol.ErrorUnsupportedFeature,
 			"unsupported_tool_choice",
-			"Responses tool choice cannot be represented by the neutral protocol",
+			"the Router does not support this Responses tool choice",
 			nil,
 		)
 	}

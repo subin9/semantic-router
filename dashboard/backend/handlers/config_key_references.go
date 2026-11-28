@@ -11,7 +11,7 @@ import (
 	routerconfig "github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 )
 
-const keyReferenceDestinationRefused = "Forbidden: an environment reference (${NAME} or $NAME) or a saved key's file or variable (auth.api_key_file, auth.api_key_env) can stay only where the saved config uses it, on the same destination; enter the value itself to send it elsewhere"
+const keyReferenceDestinationRefused = "Forbidden: an environment reference (${NAME} or $NAME) or a saved key's file or variable (api_key_file, api_key_env, key_env, password_env, hmac_key_env) can stay only where the saved config uses it, on the same destination; enter the value itself to send it elsewhere"
 
 // rejectKeyReferenceRedirect refuses a save, by a caller who may not read
 // configuration secrets, that sends a reference somewhere the stored config
@@ -127,7 +127,7 @@ func (c *keyReferenceCheck) walkMapping(saved, stored *yaml.Node, chain []keyRef
 // value the Router sends on.
 func (c *keyReferenceCheck) walkField(key string, value, previous *yaml.Node, chain []keyReferencePair, field string) bool {
 	switch {
-	case key == "api_key_file" || key == "api_key_env":
+	case key == "api_key_file" || routerconfig.IsSecretEnvReferenceField(key):
 		return value.Value == "" || (previous != nil && previous.Value == value.Value && c.kept(chain))
 	case field == ".listeners.api_keys" || field == ".listeners.api_key_files":
 		return true

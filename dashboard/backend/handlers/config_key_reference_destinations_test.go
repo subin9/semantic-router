@@ -315,3 +315,24 @@ providers:
 `
 }
 
+// A store whose own fields hold a reference sends it to the destination its
+// nested block names, as guard_verdicts' hmac_key_env and its redis block do.
+func TestAStoreKeyFollowsItsNestedDestination(t *testing.T) {
+	store := func(redis, milvus string) []byte {
+		return []byte("global:\n  stores:\n    guard_verdicts:\n      backend: redis\n      hmac_key_env: HMAC\n      redis: {" + redis + "}\n" +
+			"    vectors:\n      backend: milvus\n      api_key_env: VKEY\n      milvus: {" + milvus + "}\n")
+	}
+	stored := store("address: redis.internal:6379, password_env: PW", "address: milvus.internal:19530")
+	for name, saved := range map[string][]byte{
+		"redis moved":   store("address: attacker.example:6379, password_env: PW", "address: milvus.internal:19530"),
+		"milvus moved":  store("address: redis.internal:6379, password_env: PW", "address: attacker.example:19530"),
+		"tls turned on": store("address: redis.internal:6379, password_env: PW", "address: milvus.internal:19530, tls: true"),
+	} {
+		if keyReferencesKept(stored, saved) {
+			t.Errorf("%s: kept, want refused", name)
+		}
+	}
+	if !keyReferencesKept(stored, store("address: redis.internal:6379, password_env: PW, tls: false", "address: milvus.internal:19530")) {
+		t.Error("an explicit tls: false was refused")
+	}
+}

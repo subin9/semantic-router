@@ -170,6 +170,9 @@ var modelDestinationFields = []string{"deployment", "api_format", "schema", "cat
 // descriptions stay editable beside a key, and every other mapping compares
 // all its plain fields (directFieldsChanged).
 func enclosingFieldsChanged(pair keyReferencePair) bool {
+	if connectionBlock(pair.path) && nestedTargetsChanged(pair.stored, pair.saved) {
+		return true
+	}
 	if pair.path != ".providers" && pair.path != ".providers.models" {
 		return directFieldsChanged(pair.stored, pair.saved)
 	}
@@ -182,6 +185,38 @@ func enclosingFieldsChanged(pair keyReferencePair) bool {
 // field, or in any other field whose value is a scalar naming no reference:
 // a selector such as backend, store_backend, type or deployment, and a plain
 // setting alike.
+// connectionBlock reports whether path names one store or service. Its own
+// fields can send a value to a destination its nested mappings hold, such as
+// guard_verdicts' hmac_key_env and its redis block.
+func connectionBlock(path string) bool {
+	for _, parent := range []string{".global.stores.", ".global.services."} {
+		if rest, ok := strings.CutPrefix(path, parent); ok && rest != "" && !strings.Contains(rest, ".") {
+			return true
+		}
+	}
+	return false
+}
+
+// nestedTargetsChanged compares the destination fields of a mapping and of
+// every mapping under it; a nested mapping added or removed changes them.
+func nestedTargetsChanged(stored, saved *yaml.Node) bool {
+	if stored == nil || saved == nil || stored.Kind != yaml.MappingNode || saved.Kind != yaml.MappingNode {
+		return !sameOptionalNode(stored, saved)
+	}
+	if configSecretTargetChanged(stored, saved) {
+		return true
+	}
+	for _, pair := range [][2]*yaml.Node{{stored, saved}, {saved, stored}} {
+		for i := 0; i+1 < len(pair[0].Content); i += 2 {
+			key, child := pair[0].Content[i].Value, pair[0].Content[i+1]
+			if child.Kind == yaml.MappingNode && nestedTargetsChanged(mappingValueNode(stored, key), mappingValueNode(saved, key)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func directFieldsChanged(stored, saved *yaml.Node) bool {
 	if configSecretTargetChanged(stored, saved) {
 		return true
@@ -246,7 +281,7 @@ func requestScope(chain []keyReferencePair) (scope [3]keyReferencePair, rides bo
 		case ".global.plugins", ".global.integrations":
 			rides = true
 		}
-		ownDestination = ownDestination || namesDestination(pair.saved)
+		ownDestination = ownDestination || namesDestination(pair.saved) || connectionBlock(pair.path)
 	}
 	return scope, rides || !ownDestination
 }

@@ -162,9 +162,28 @@ func bundleFrom(ctx context.Context) *Bundle {
 	return bundle
 }
 
+// Unbundled is ctx without its bundle: a call made with it goes out on its
+// own, as the probe of an overloaded decision runtime does, while its caller
+// stays a participant of the bundle.
+func Unbundled(ctx context.Context) context.Context {
+	if bundleFrom(ctx) == nil {
+		return ctx
+	}
+	return admission.WithWaiter(context.WithValue(ctx, bundleKey{}, (*Bundle)(nil)), nil)
+}
+
 // InBundle reports whether runtime calls made with ctx park in a bundle.
 func InBundle(ctx context.Context) bool {
 	return bundleFrom(ctx) != nil
+}
+
+type ownDecisionDeadlineKey struct{}
+
+// WithOwnDecisionDeadline makes a decision caller stop at its own deadline
+// even when its shared exchange continues for longer-lived callers. A
+// failover attempt needs the remaining caller budget for another deployment.
+func WithOwnDecisionDeadline(ctx context.Context) context.Context {
+	return context.WithValue(ctx, ownDecisionDeadlineKey{}, true)
 }
 
 // participantOf returns the declared participant whose context ctx is, or
@@ -280,6 +299,33 @@ func Await(ctx context.Context) func() {
 		return func() {}
 	}
 	return bundle.waiting(bundle.participantOf(ctx))
+}
+
+// Pause counts the caller of ctx as blocked in its bundle, but not as asked,
+// while it waits before asking again, as a call the decision runtime refused
+// as overloaded does: the bundle sends the stage's other work meanwhile, and
+// keeps the questions to the caller's deployments for the call it makes next,
+// so they travel together again. A caller that may ask any deployment counts
+// as asked as well, as it does while it waits for an admission slot. Call the
+// returned function when the wait ends.
+func Pause(ctx context.Context) func() {
+	bundle := bundleFrom(ctx)
+	if bundle == nil {
+		return func() {}
+	}
+	p := bundle.participantOf(ctx)
+	bundle.mu.Lock()
+	bundle.blockLocked(p, false, 1)
+	bundle.sendReadyLocked()
+	bundle.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			bundle.mu.Lock()
+			bundle.blockLocked(p, false, -1)
+			bundle.mu.Unlock()
+		})
+	}
 }
 
 // Fan runs work(i) for every i in [0, n) in its own goroutine, each a
@@ -410,15 +456,15 @@ func (c *bundleCall) wait() error {
 }
 
 // waitCarrier waits for a sent call until the exchange that carries it ends,
-// or until its caller gives up on it: a caller whose context is cancelled,
-// rather than past its deadline, waits no longer.
+// or until its caller gives up on it: a cancelled caller, or one that set
+// WithOwnDecisionDeadline and reached its deadline, waits no longer.
 func (c *bundleCall) waitCarrier() error {
 	select {
 	case <-c.done:
 		return c.answered()
 	case <-c.carrier.Done():
 	case <-c.ctx.Done():
-		if errors.Is(c.ctx.Err(), context.Canceled) {
+		if errors.Is(c.ctx.Err(), context.Canceled) || c.ctx.Value(ownDecisionDeadlineKey{}) == true {
 			return c.ctx.Err()
 		}
 		select {

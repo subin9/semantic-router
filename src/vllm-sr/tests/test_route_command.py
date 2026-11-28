@@ -441,8 +441,8 @@ def test_recipe_learning_stops_when_next_offset_does_not_advance(
 def test_recipe_learning_caps_its_limit_and_the_fetch_takes_filters(
     monkeypatch,
 ) -> None:
-    # recipe learning keeps its 500-record cap; vllm-sr usage reads a whole
-    # window through the same fetch, with its filters on every page
+    # recipe learning caps its limit at its 100,000-record bound; vllm-sr usage
+    # reads a whole window through the same fetch, with its filters on every page
     requested: list[dict[str, str]] = []
 
     class _Response:
@@ -460,10 +460,10 @@ def test_recipe_learning_caps_its_limit_and_the_fetch_takes_filters(
 
     monkeypatch.setattr("cli.router_management_client.requests.request", _fake_request)
 
-    load_replay_records(None, "http://router.example:8080", 1000, 1)
+    load_replay_records(None, "http://router.example:8080", 200_000, 1)
     fetch_replay_payload("http://router.example:8080", 1000, 1, {"since": "t"})
 
-    assert requested == [{"limit": "500"}, {"since": "t", "limit": "1000"}]
+    assert requested == [{"limit": "100000"}, {"since": "t", "limit": "1000"}]
 
 
 def test_recipe_learning_rejects_endpoint_credentials() -> None:
